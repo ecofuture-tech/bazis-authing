@@ -15,13 +15,18 @@
 from django.conf import settings
 from django.utils.translation import gettext as _
 
-from fastapi import Depends
+from fastapi import Cookie, Depends, Query
+from fastapi.security import OAuth2PasswordBearer
 
-from starlette.status import HTTP_100_CONTINUE, HTTP_401_UNAUTHORIZED, HTTP_422_UNPROCESSABLE_ENTITY
+from starlette.status import (
+    HTTP_100_CONTINUE,
+    HTTP_401_UNAUTHORIZED,
+    HTTP_422_UNPROCESSABLE_CONTENT,
+)
 
 from bazis.contrib.users import get_user_model
-from bazis.contrib.users.service import get_token_data, get_user_optional
-from bazis.core.errors import JsonApiBazisError, JsonApiBazisException
+from bazis.contrib.users.service import get_token_data, get_user_from_token, get_user_optional
+from bazis.core.errors import JsonApi401Exception, JsonApiBazisError, JsonApiBazisException
 from bazis.core.routing import BazisRouter
 from bazis.core.utils.imp import import_module
 
@@ -34,15 +39,37 @@ User = get_user_model()
 router = BazisRouter(tags=[_('Authentication')])
 
 
+def get_token_data_lenient(
+    token_header: str = Depends(
+        OAuth2PasswordBearer(tokenUrl=settings.BAZIS_OPENAPI_TOKEN_URL, auto_error=False)
+    ),
+    token_param: str | None = Query(default=None, alias=settings.BAZIS_AUTH_COOKIE_NAME),
+    token_cookie: str | None = Cookie(default=None, alias=settings.BAZIS_AUTH_COOKIE_NAME),
+) -> dict:
+    """
+    The token data for the authorization endpoint: an expired or invalid token (e.g. signed
+    with a previous SECRET_KEY) means that the user is not authorized, so that the client
+    receives the login actions and a new store token instead of 401.
+    """
+    try:
+        return get_token_data(token_header, token_param, token_cookie)
+    except JsonApi401Exception:
+        return {}
+
+
+def get_user_lenient(token_data: dict = Depends(get_token_data_lenient)):
+    return get_user_optional(get_user_from_token(token_data))
+
+
 @router.get('/auth/', response_model=AuthResponse)
 def auth(
     auth_store: AuthStore = Depends(),
-    user: User = Depends(get_user_optional),
-    token_data: dict = Depends(get_token_data),
+    user: User = Depends(get_user_lenient),
+    token_data: dict = Depends(get_token_data_lenient),
 ):
     if user.is_anonymous:
         if user_id := auth_store.user_id:
-            user = User.objects.filter(id=user_id).first()
+            user = User.objects.filter(id=user_id, is_active=True).first()
 
     services = []
     for service_path in settings.BAZIS_AUTH_KINDS:
@@ -104,7 +131,7 @@ def auth(
             errors.append(
                 JsonApiBazisError(
                     err.detail,
-                    status=HTTP_422_UNPROCESSABLE_ENTITY,
+                    status=HTTP_422_UNPROCESSABLE_CONTENT,
                     code=err.code,
                     title=_('Authentication error'),
                 )

@@ -27,14 +27,14 @@ from fastapi.security.utils import get_authorization_scheme_param
 
 from starlette.requests import Request
 
-from jose import jwt
+import jwt
 
 from bazis.contrib.users.service import get_anonymous_user_model, get_user_model
 from bazis.core.errors import JsonApi401Exception
 from bazis.core.utils.functools import CtxToggle
 
 
-LOG = logging.getLogger()
+LOG = logging.getLogger(__name__)
 User = get_user_model()
 AnonymousUser = get_anonymous_user_model()
 
@@ -52,10 +52,20 @@ class AuthToken:
 
         try:
             token_data = jwt.decode(
-                data, settings.SECRET_KEY, algorithms=settings.BAZIS_JWT_SESSION_ALG
+                data,
+                settings.SECRET_KEY,
+                algorithms=[settings.BAZIS_JWT_SESSION_ALG],
+                options={'require': ['sub']},
             )
-        except Exception:
-            raise JsonApi401Exception(detail='Token is invalid') from None
+        except jwt.InvalidTokenError:
+            token_data = None
+
+        # a token with an expiration is a session token of bazis-users, not a store token
+        if token_data is None or 'exp' in token_data:
+            if required:
+                raise JsonApi401Exception(detail='Token is invalid')
+            # e.g. a cookie signed with a previous SECRET_KEY: a new store replaces it
+            return None
 
         return cls(
             key=token_data['sub'],
@@ -193,7 +203,7 @@ class AuthStore(UserDict):
     def set_error(self, code, detail=None):
         LOG.info('AuthStore set_error: %s, %s', code, detail)
         err = AuthError(code, detail)
-        errors = self.data.get('errors', [])
+        errors = self.data.get('_errors', [])
         errors.append(asdict(err))
         self.data['_errors'] = errors
         self._push_data()
