@@ -20,3 +20,8 @@ from bazis.core.utils.apps import BaseConfig
 class AuthingConfig(BaseConfig):
     name = 'bazis.contrib.authing'
     verbose_name = _('Authing')
+
+    def ready(self):
+        super().ready()
+
+        from . import checks  # noqa: F401  registers the system checks

@@ -1,0 +1,64 @@
+# What the package is for and how to use it, for tools and AI agents (see AGENTS.md).
+# `import` paths and `check` ids are verified by tests/test_manifest.py.
+
+[package]
+name = "bazis-authing"
+summary = "sign-in flows (password, Google OAuth) that end in a session JWT of bazis-users"
+solves = [
+    "sign in by username and password from a web or mobile client",
+    "sign in with Google (redirect flow or tokens of a Google SDK)",
+    "one endpoint that tells the client whether it is signed in and how to sign in",
+    "add an own sign-in method (SSO, external provider)",
+]
+requires = ["bazis", "bazis-users"]
+pairs_well = ["bazis-permit"]
+
+[[extension_points]]
+name = "auth router"
+import = "bazis.contrib.authing.routes.router"
+use_when = "always: GET /auth/ (register bazis.contrib.authing.router)"
+
+[[extension_points]]
+name = "password router"
+import = "bazis.contrib.authing.services.password.routes.router"
+use_when = "password login (register bazis.contrib.authing.services.password.router)"
+
+[[extension_points]]
+name = "Google router"
+import = "bazis.contrib.authing.services.google.routes.router"
+use_when = "Google login (register bazis.contrib.authing.services.google.router)"
+
+[[extension_points]]
+name = "AuthStoreTokenRequired"
+import = "bazis.contrib.authing.service.AuthStoreTokenRequired"
+use_when = "the dependency of the login endpoint of an own sign-in service"
+
+[[extension_points]]
+name = "AuthStore"
+import = "bazis.contrib.authing.service.AuthStore"
+use_when = "the authorization store: login(), set_error(), response_set_cookie()"
+
+[[extension_points]]
+name = "google_get_user"
+import = "bazis.contrib.authing.services.google.routes.google_get_user"
+use_when = "how a verified Google account is matched to a user (to restrict the accounts)"
+
+[[pitfalls]]
+text = "a module of BAZIS_AUTH_KINDS that does not import is skipped silently"
+check = "authing.W001"
+
+[[pitfalls]]
+text = "a service in BAZIS_AUTH_KINDS whose router is not registered makes GET /auth/ fail"
+check = "authing.E001"
+
+[[pitfalls]]
+text = "the Google OAuth client is built once per process: restart after changing BAZIS_G_AUTH_CLIENT_ID or BAZIS_G_AUTH_CLIENT_SECRET"
+
+[[pitfalls]]
+text = "without BAZIS_G_AUTH_REDIRECT_URI the Google redirect URI is HOST_URL + the callback path: set HOST_URL"
+
+[[pitfalls]]
+text = "until the store expires (BAZIS_AUTH_COOKIE_LIFETIME) GET /auth/ with the store token returns a new session token: drop it on logout"
+
+[[pitfalls]]
+text = "the authorization store lives in the default cache: all processes must share it (Redis)"
