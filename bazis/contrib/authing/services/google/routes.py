@@ -22,10 +22,12 @@ from django.contrib.auth.hashers import make_password
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Body, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from starlette.status import HTTP_303_SEE_OTHER
+
+from pydantic import BaseModel
 
 from asgiref.sync import async_to_sync, sync_to_async
 from authlib.integrations.starlette_client import OAuth
@@ -114,11 +116,29 @@ def google_auth_callback(request: Request):
     return google_create_user(request, auth_store, google_token)
 
 
+class GoogleTokens(BaseModel):
+    id_token: str
+    access_token: str
+
+
 @router.post('/google-auth-verify/')
-def google_auth_verify(request: Request, id_token: str, access_token: str, auth_store: AuthStoreTokenRequired = Depends()):
-    if not id_token or not access_token:
-        raise HTTPException(status_code=400, detail="Missing id_token or access_token")
-    return google_create_user(request, auth_store, {'id_token': id_token, 'access_token': access_token})
+def google_auth_verify(
+    request: Request,
+    auth_store: AuthStoreTokenRequired = Depends(),
+    tokens: GoogleTokens | None = Body(default=None),
+    id_token: str | None = Query(default=None, deprecated=True),
+    access_token: str | None = Query(default=None, deprecated=True),
+):
+    """
+    Signs in with the tokens a client received from Google itself (e.g. a mobile SDK).
+    The tokens are expected in the body: in the query string they end up in access logs.
+    """
+    if tokens is None:
+        if not id_token or not access_token:
+            raise HTTPException(status_code=400, detail="Missing id_token or access_token")
+        logger.warning('Google authentication: tokens passed in the query string (deprecated)')
+        tokens = GoogleTokens(id_token=id_token, access_token=access_token)
+    return google_create_user(request, auth_store, tokens.model_dump())
 
 
 class GoogleAuthError(Exception):

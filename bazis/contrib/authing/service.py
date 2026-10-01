@@ -58,8 +58,12 @@ class AuthToken:
                 options={'require': ['sub']},
             )
         except jwt.InvalidTokenError:
+            token_data = None
+
+        # a token with an expiration is a session token of bazis-users, not a store token
+        if token_data is None or 'exp' in token_data:
             if required:
-                raise JsonApi401Exception(detail='Token is invalid') from None
+                raise JsonApi401Exception(detail='Token is invalid')
             # e.g. a cookie signed with a previous SECRET_KEY: a new store replaces it
             return None
 

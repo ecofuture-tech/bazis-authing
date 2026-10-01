@@ -178,3 +178,49 @@ def test_google_sign_in(sample_app, monkeypatch):
     assert data['username'] == '1001'
     assert data['email'] == 'g@site.com'
     assert data['first_name'] == ''
+
+
+@pytest.mark.django_db(transaction=True)
+def test_google_verify_tokens_in_body(sample_app, monkeypatch):
+    from fastapi import FastAPI
+
+    from bazis.contrib.authing.services.google import routes as google_routes
+
+    received = {}
+
+    def fake_create_user(request, auth_store, google_token=None):
+        received.update(google_token)
+        return {'ok': True}
+
+    monkeypatch.setattr(google_routes, 'google_create_user', fake_create_user)
+    app = FastAPI()
+    app.include_router(google_routes.router)
+    store_token = get_api_client(sample_app).get('/api/v1/authing/auth/').json()['errors'][0][
+        'meta'
+    ]['token']
+    client = get_api_client(app, store_token)
+
+    response = client.post(
+        '/google-auth-verify/', json_data={'id_token': 'id', 'access_token': 'access'}
+    )
+    assert response.status_code == 200, response.text
+    assert received == {'id_token': 'id', 'access_token': 'access'}
+
+    received.clear()
+    response = client.post('/google-auth-verify/', params={'id_token': 'id2', 'access_token': 'a2'})
+    assert response.status_code == 200
+    assert received == {'id_token': 'id2', 'access_token': 'a2'}
+
+    assert client.post('/google-auth-verify/').status_code == 400
+
+
+@pytest.mark.django_db(transaction=True)
+def test_session_token_is_not_a_store_token(sample_app):
+    from bazis.contrib.authing.service import AuthToken
+
+    user = User.objects.create_user('user1', password='weak_password_1')
+    assert AuthToken.parse(user.jwt_build()) is None
+    with pytest.raises(Exception):
+        AuthToken.parse(user.jwt_build(), required=True)
+    store = AuthToken.new()
+    assert AuthToken.parse(store.value).key == store.key
