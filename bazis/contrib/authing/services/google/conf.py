@@ -20,12 +20,20 @@ from bazis.core.utils.schemas import BazisSettings
 
 
 class Settings(BazisSettings):
-    BAZIS_G_AUTH_CLIENT_ID: str = Field('', title=_('Google client ID'), dynamic=True)
-    BAZIS_G_AUTH_CLIENT_SECRET: str = Field('', title=_('Google client secret'), dynamic=True)
+    BAZIS_G_AUTH_CLIENT_ID: str = Field(
+        '',
+        title=_('Google client ID'),
+        json_schema_extra={'dynamic': True},
+    )
+    BAZIS_G_AUTH_CLIENT_SECRET: str = Field(
+        '',
+        title=_('Google client secret'),
+        json_schema_extra={'dynamic': True},
+    )
     BAZIS_G_AUTH_REDIRECT_URI: str = Field(
         '',
         title=_('Google redirect URI (by default HOST_URL + the path of google_auth_callback)'),
-        dynamic=True,
+        json_schema_extra={'dynamic': True},
     )
 
 
