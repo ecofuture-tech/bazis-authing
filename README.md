@@ -14,14 +14,19 @@ uv add bazis-authing
 
 # Configure in settings.py
 BAZIS_AUTH_KINDS = [
-    'bazis.contrib.authing.password',  # Username/password authentication
+    'bazis.contrib.authing.services.password',  # Username/password authentication
 ]
 
 # Register routes in main router.py
 from bazis.core.routing import BazisRouter
 
 router = BazisRouter(prefix='/api/v1')
-router.register('bazis.contrib.authing.router')
+from bazis.contrib.authing.routes import router as authing_router
+from bazis.contrib.authing.services.password.router import router as password_router
+
+router.register(prefix='/authing', arg=authing_router)
+# the router of every service in BAZIS_AUTH_KINDS
+router.register(prefix='/authing', arg=password_router)
 ```
 
 ## Table of Contents
@@ -216,7 +221,7 @@ def password_auth(auth_store: AuthStoreTokenRequired = Depends()):
 
 # List of available authentication methods
 BAZIS_AUTH_KINDS = [
-    'bazis.contrib.authing.password',  # Username/password
+    'bazis.contrib.authing.services.password',  # Username/password
     # Add other methods here
 ]
 ```
@@ -230,7 +235,12 @@ from bazis.core.routing import BazisRouter
 router = BazisRouter(prefix='/api/v1')
 
 # Register authentication routes
-router.register('bazis.contrib.authing.router')
+from bazis.contrib.authing.routes import router as authing_router
+from bazis.contrib.authing.services.password.router import router as password_router
+
+router.register(prefix='/authing', arg=authing_router)
+# the router of every service in BAZIS_AUTH_KINDS
+router.register(prefix='/authing', arg=password_router)
 ```
 
 ### Basic Password Authentication
@@ -572,7 +582,7 @@ def oauth_login():
 
 ```python
 BAZIS_AUTH_KINDS = [
-    'bazis.contrib.authing.password',
+    'bazis.contrib.authing.services.password',
     'myapp.auth_oauth',  # Your module
 ]
 ```
