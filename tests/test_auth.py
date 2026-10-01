@@ -217,10 +217,11 @@ def test_google_verify_tokens_in_body(sample_app, monkeypatch):
 @pytest.mark.django_db(transaction=True)
 def test_session_token_is_not_a_store_token(sample_app):
     from bazis.contrib.authing.service import AuthToken
+    from bazis.core.errors import JsonApi401Exception
 
     user = User.objects.create_user('user1', password='weak_password_1')
     assert AuthToken.parse(user.jwt_build()) is None
-    with pytest.raises(Exception):
+    with pytest.raises(JsonApi401Exception):
         AuthToken.parse(user.jwt_build(), required=True)
     store = AuthToken.new()
     assert AuthToken.parse(store.value).key == store.key
