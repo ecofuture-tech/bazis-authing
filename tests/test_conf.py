@@ -12,21 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from django.utils.translation import gettext_lazy as _
-
-from pydantic import Field
-
-from bazis.core.utils.schemas import BazisSettings
+from bazis.contrib.authing.conf import Settings
 
 
-class Settings(BazisSettings):
-    BAZIS_AUTH_COOKIE_LIFETIME: int = Field(600, title=_('Authorization cookie lifetime'))
-    BAZIS_AUTH_KINDS: list[str] = Field(
-        [
-            'bazis.contrib.authing.services.password',
-        ],
-        title=_('Authorization services'),
-    )
-
-
-settings = Settings()
+def test_conf_does_not_declare_django_settings():
+    """
+    The conf modules of all installed Bazis packages are loaded in every project, so
+    bazis-authing must not declare Django settings (the core declares
+    AUTHENTICATION_BACKENDS).
+    """
+    assert 'AUTHENTICATION_BACKENDS' not in Settings.model_fields
+    assert 'BAZIS_AUTH_KINDS' in Settings.model_fields

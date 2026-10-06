@@ -26,8 +26,9 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
 - `BS_BAZIS_AUTH_COOKIE_LIFETIME` (default 600): seconds the store data lives in the cache.
   The store is in the Django default cache (`auth_store_<key>`): every process must share it
   (Redis).
-- `BS_AUTHENTICATION_BACKENDS` (default `["django.contrib.auth.backends.ModelBackend"]`):
-  used by the password login.
+- `BS_AUTHENTICATION_BACKENDS` (declared by the core, default
+  `["django.contrib.auth.backends.ModelBackend"]`, needs bazis 2.5.0): the password login
+  calls Django's `authenticate`, which uses it.
 - Google: dynamic settings (Constance, stored in the database, edited in the admin)
   `BAZIS_G_AUTH_CLIENT_ID`, `BAZIS_G_AUTH_CLIENT_SECRET`, optional
   `BAZIS_G_AUTH_REDIRECT_URI` (default `HOST_URL` + the path of `/google-auth-callback/`:
