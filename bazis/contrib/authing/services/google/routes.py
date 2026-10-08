@@ -128,13 +128,19 @@ def google_auth_callback(request: Request):
     except Exception:
         logger.exception('Google authentication: the access token was not received')
         auth_store.set_error('GOOGLE_AUTH_ERROR', 'Google authentication failed')
-    google_sign_in(request, auth_store, google_token)
+    signed_in = google_sign_in(request, auth_store, google_token)
 
     page = CALLBACK_PAGE.format(
         title=escape(gettext('Google Authentication')),
         text=escape(gettext('The sign-in is finished: return to the application.')),
     )
-    return auth_store.response_set_cookie(HTMLResponse(page))
+    response = HTMLResponse(page)
+    # the cookie of the store only after authlib accepted the state (it is in the session of
+    # this browser) and the sign-in succeeded: a callback URL with the state of another
+    # browser must not plant that store in this one
+    if signed_in:
+        auth_store.response_set_cookie(response)
+    return response
 
 
 class GoogleTokens(BaseModel):
@@ -192,8 +198,11 @@ def google_get_user(google_user: dict):
     return user
 
 
-def google_sign_in(request: Request, auth_store, google_token: dict = None):
-    """Signs the store in with the Google tokens, or records the error of the sign-in."""
+def google_sign_in(request: Request, auth_store, google_token: dict = None) -> bool:
+    """
+    Signs the store in with the Google tokens, or records the error of the sign-in. True if
+    the store is signed in.
+    """
     if google_token:
         try:
             oauth_instance = get_oauth()
@@ -221,6 +230,8 @@ def google_sign_in(request: Request, auth_store, google_token: dict = None):
             auth_store.set_error('GOOGLE_AUTH_ERROR', 'Google authentication failed')
         else:
             auth_store.login(user, request, AUTH_CODE)
+            return True
+    return False
 
 
 def google_create_user(request: Request, auth_store, google_token: dict = None):

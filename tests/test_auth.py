@@ -483,6 +483,8 @@ def test_google_flow_keeps_the_store_token_out_of_urls(sample_app, monkeypatch, 
     assert response.status_code == 200
     assert 'location' not in response.headers
     assert store not in response.body.decode()
+    # a successful sign-in refreshes the store cookie of the window
+    assert response.headers['set-cookie'].startswith('bazis_auth=')
 
     # the state is used once
     with pytest.raises(Exception) as exc:
@@ -493,3 +495,51 @@ def test_google_flow_keeps_the_store_token_out_of_urls(sample_app, monkeypatch, 
     assert response.status_code == 200
     assert response.json()['email'] == 'g@site.com'
     assert_not_authenticated(get_api_client(sample_app, store).get('/api/v1/authing/auth/'), store)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_forged_google_callback_sets_no_cookie(sample_app, monkeypatch):
+    """
+    A callback URL with the state of another browser (e.g. of an attacker's store): authlib
+    rejects the state, which is not in the session of this browser, so the window gets no
+    cookie of that store and the store is not signed in.
+    """
+    from starlette.requests import Request
+
+    from bazis.contrib.authing.service import AuthStore
+    from bazis.contrib.authing.services.google import routes as google_routes
+
+    class MismatchingStateError(Exception):
+        pass
+
+    class FakeGoogle:
+        async def authorize_access_token(self, request, claims_options=None):
+            raise MismatchingStateError('state not in the session')
+
+    class FakeOAuth:
+        google = FakeGoogle()
+
+    monkeypatch.setattr(google_routes, 'get_oauth', lambda: FakeOAuth())
+
+    from django.core.cache import cache
+
+    attacker_store = new_store(sample_app)
+    state = 'forged-state'
+    cache.set(f'{google_routes.STATE_CACHE_PREFIX}{state}', attacker_store, 60)
+
+    response = google_routes.google_auth_callback(
+        Request(
+            {
+                'type': 'http',
+                'method': 'GET',
+                'path': '/google-auth-callback/',
+                'headers': [],
+                'query_string': f'state={state}&code=code'.encode(),
+            }
+        )
+    )
+    assert response.status_code == 200
+    assert 'set-cookie' not in response.headers
+    store = AuthStore(token_param=attacker_store, token_cookie=None, token_header=None)
+    assert store.user_id is None
+    assert [err.code for err in store.errors] == ['GOOGLE_AUTH_ERROR']

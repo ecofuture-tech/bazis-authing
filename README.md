@@ -420,6 +420,11 @@ the client drops it.
   for development over plain HTTP)
 - **No tokens in redirects** — the login redirects and the Google state do not carry the
   store token; only `/google-auth-init/?bazis_auth=<store token>` has it in the URL
+- **Known limitation (login CSRF)** — the Google init is a GET with the store token, so an
+  attacker can send a victim `/google-auth-init/?bazis_auth=<attacker's store>`: a victim
+  who already consented in Google signs the attacker's store in without a prompt, and the
+  attacker takes the session. Planned fix: a POST init with the store token as the bearer
+  token that returns a one-time ticket for the window URL
 - **JWT tokens** — for further API operations
 
 ## Examples

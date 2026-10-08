@@ -68,3 +68,6 @@ text = "the store cookie is Secure: set BS_BAZIS_AUTH_COOKIE_SECURE=false for de
 
 [[pitfalls]]
 text = "the authorization store lives in the default cache: all processes must share it (Redis)"
+
+[[pitfalls]]
+text = "the GET /google-auth-init/?bazis_auth=<store> allows a login CSRF (a victim who consented in Google signs an attacker's store in): known limitation, a POST init with a one-time ticket is planned"

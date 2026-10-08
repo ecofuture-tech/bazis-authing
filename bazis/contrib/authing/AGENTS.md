@@ -79,6 +79,14 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
 - The store token is in a URL only in the Google browser flow (`/google-auth-init/`), so it
   can be in access logs: whoever has it before the client takes the session can take it.
   The client asks for the session as soon as the store is signed in.
+- Known limitation of the GET `/google-auth-init/` (login CSRF): an attacker can send a
+  victim the link `/google-auth-init/?bazis_auth=<attacker's store>`. If the victim has
+  already consented to the app in Google, Google returns without a prompt, and the victim's
+  account silently signs in the attacker's store, which then gives the attacker the
+  victim's session. The callback sets the store cookie only after authlib accepted the
+  state and the sign-in succeeded, but that does not stop this link. Planned fix: a POST
+  init with the store token as the bearer token that returns a one-time ticket for the
+  window URL, so that only the client holding the store can start a Google sign-in for it.
 - Google: the ID token is verified (signature, issuer, audience, expiration) and identifies
   the account; the email must have `email_verified: true`. The user is found by email
   (case-insensitive) or created (`username` = Google `sub`, unusable password). An existing
