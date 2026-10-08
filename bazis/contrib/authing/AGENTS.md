@@ -23,9 +23,12 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
   "bazis.contrib.authing.services.google"]'`: the services `/auth/` offers (default: password
   only). Register the router of every listed service (`authing.E001`); a module that does not
   import is skipped silently (`authing.W001`).
-- `BS_BAZIS_AUTH_COOKIE_LIFETIME` (default 600): seconds the store data lives in the cache.
-  The store is in the Django default cache (`auth_store_<key>`): every process must share it
-  (Redis).
+- `BS_BAZIS_AUTH_COOKIE_LIFETIME` (default 600): seconds a store lives until it is signed in
+  (the cache entry and the cookie). `BS_BAZIS_AUTH_CLAIM_LIFETIME` (default 60): seconds a
+  signed-in store waits for `GET /auth/` to take its session. The store is in the Django
+  default cache (`auth_store_<key>`): every process must share it (Redis).
+- `BS_BAZIS_AUTH_COOKIE_SECURE` (default true): the store cookie is sent over HTTPS only;
+  set it to false for development over plain HTTP.
 - `BS_AUTHENTICATION_BACKENDS` (declared by the core, default
   `["django.contrib.auth.backends.ModelBackend"]`, needs bazis 2.5.0): the password login
   calls Django's `authenticate`, which uses it.
@@ -40,18 +43,30 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
 1. `GET /auth/` without a session: HTTP 400 with an error `status: 401`,
    `code: UNAUTHORIZED`, `meta.actions` (the login actions: `code`, `name`, `url`,
    `method`) and `meta.token` (the store token, also set as the cookie
-   `BAZIS_AUTH_COOKIE_NAME`, default `bazis_auth`). Failed attempts of this store follow
-   as errors with `status: 422` (`USERNAME_PASSWORD_ERROR`, `GOOGLE_AUTH_ERROR`).
-2. Sign in with the store token (cookie, `Authorization: Bearer` or the query parameter
+   `BAZIS_AUTH_COOKIE_NAME`, default `bazis_auth`: HttpOnly, SameSite=Lax, Secure, for the
+   lifetime of the store). Failed attempts of this store follow as errors with
+   `status: 422` (`USERNAME_PASSWORD_ERROR`, `GOOGLE_AUTH_ERROR`); the client retries with
+   the same store.
+2. Sign in with the store token (`Authorization: Bearer`, the cookie or the query parameter
    `BAZIS_AUTH_COOKIE_NAME`; missing or expired: 401):
    - `POST /password/` JSON `{"username", "password"}`;
-   - Google in a browser: open `GET /google-auth-init/?bazis_auth=<store token>`; Google
-     returns to `/google-auth-callback/`;
    - Google SDK (mobile): `POST /google-auth-verify/` JSON `{"id_token", "access_token"}`.
-   Each answers 303 to `/auth/?bazis_auth=<store token>` (and sets the cookie).
-3. `GET /auth/` with a signed-in store or a valid session token: 200
-   `{user_id, username, first_name, last_name, email, token, logout_actions}`; `token` is
-   the session JWT of bazis-users (with `auth_type`). Send it as `Authorization: Bearer`.
+   Both answer 303 to `/auth/` (no token in the URL) and set the cookie: follow it with the
+   same bearer token or the cookie.
+   - Google in a browser: open `GET /google-auth-init/?bazis_auth=<store token>` in a window
+     (the only URL with the store token; the state sent to Google is a one-time value).
+     Google returns to `/google-auth-callback/`, which signs the store in and answers a page
+     without tokens ("return to the application"); the client that holds the store token
+     asks `GET /auth/` (e.g. every second) until the store is signed in or has an error.
+3. `GET /auth/` with a signed-in store: 200
+   `{user_id, username, first_name, last_name, email, token, logout_actions}` once: the
+   store is deleted (and the store cookie with it), the next request with its token gets
+   the answer of step 1 with a new store. `token` is the session JWT of bazis-users (with
+   `auth_type`); send it as `Authorization: Bearer`. With a valid session token `GET /auth/`
+   answers 200 with a new session token.
+4. `POST /logout/`: deletes the stores of the request (bearer token, cookie, query
+   parameter) and the cookie; 204, idempotent. The session JWT is stateless: the client
+   drops it.
 - `POST /password/token/` (OAuth2 password form) returns
   `{"access_token", "token_type": "bearer"}` directly, without the store.
 
@@ -59,8 +74,19 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
 
 - The store token is a JWT with only `sub` (a random key), no `exp`: bazis-users treats it
   as anonymous on HTTP, bazis-ws rejects it; a session token is never accepted as a store
-  token. Until the store expires, `GET /auth/` with it returns a new session token: on
-  logout drop the store cookie as well as the session token.
+  token. A store gives one session (the deletion in the cache is atomic, so of concurrent
+  requests only one gets it), and a signed-in store lives `BAZIS_AUTH_CLAIM_LIFETIME`.
+- The store token is in a URL only in the Google browser flow (`/google-auth-init/`), so it
+  can be in access logs: whoever has it before the client takes the session can take it.
+  The client asks for the session as soon as the store is signed in.
+- Known limitation of the GET `/google-auth-init/` (login CSRF): an attacker can send a
+  victim the link `/google-auth-init/?bazis_auth=<attacker's store>`. If the victim has
+  already consented to the app in Google, Google returns without a prompt, and the victim's
+  account silently signs in the attacker's store, which then gives the attacker the
+  victim's session. The callback sets the store cookie only after authlib accepted the
+  state and the sign-in succeeded, but that does not stop this link. Planned fix: a POST
+  init with the store token as the bearer token that returns a one-time ticket for the
+  window URL, so that only the client holding the store can start a Google sign-in for it.
 - Google: the ID token is verified (signature, issuer, audience, expiration) and identifies
   the account; the email must have `email_verified: true`. The user is found by email
   (case-insensitive) or created (`username` = Google `sub`, unusable password). An existing
@@ -76,6 +102,6 @@ A module listed in `BAZIS_AUTH_KINDS` with `AUTH_CODE`, `get_login_action()` (op
 `get_logout_actions()`) and a router whose endpoint takes
 `auth_store: AuthStoreTokenRequired = Depends()`, calls
 `auth_store.login(user, request, AUTH_CODE)` (or `auth_store.set_error(code, detail)`) and
-returns `auth_store.response_set_cookie(RedirectResponse(app.router.url_path_for('auth') +
-f'?{auth_store.as_param}', status_code=303))` (`app` from `bazis.core.app`), as
-`services/password/routes.py` does.
+returns `auth_store.redirect_to_auth()` (303 to `/auth/` with the cookie), as
+`services/password/routes.py` does. `auth_store.as_param` (the store token as a query
+parameter) is deprecated: it puts the token in URLs.

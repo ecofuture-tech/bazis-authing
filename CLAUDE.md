@@ -2,9 +2,9 @@
 
 Sign-in flows for Bazis: an authorization store (`AuthStore`, a random key in a JWT
 without expiration, data in the cache) collects the result of a sign-in (password, Google
-OAuth), and `GET /auth/` exchanges it for a session JWT of bazis-users. The store token and
-the session token share the `BAZIS_AUTH_COOKIE_NAME` cookie; bazis-users treats a token
-without `exp` as anonymous.
+OAuth), and `GET /auth/` exchanges it once for a session JWT of bazis-users (the store is
+deleted, `POST /logout/` deletes it too). The store token and the session token share the
+`BAZIS_AUTH_COOKIE_NAME` cookie; bazis-users treats a token without `exp` as anonymous.
 
 Security: a Google account is matched to a user by email only if Google verified it, and
 the claims of the ID token are authoritative. Do not log tokens or profile data.

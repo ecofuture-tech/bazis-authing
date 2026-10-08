@@ -93,7 +93,8 @@ Central endpoint for authentication operations.
 **Purpose**:
 - Check current authentication status
 - Get list of available login methods
-- Get JWT token for authenticated users
+- Get JWT token for authenticated users (a signed-in authorization store gives it once:
+  the store is deleted, the next request with its token is not authenticated)
 
 **Behavior**:
 
@@ -194,7 +195,12 @@ Cookie-based authentication state storage system.
 - `login(user, request, auth_type)` — registers successful user authentication
 - `set_error(code, detail)` — saves authentication error
 - `data_reset()` — clears storage
-- `response_set_cookie(response)` — adds cookie to response
+- `redirect_to_auth()` — the answer of a login: 303 to `/auth/` with the cookie, without
+  the store token in the URL
+- `response_set_cookie(response)` — adds the store cookie to a response (HttpOnly,
+  SameSite=Lax, Secure unless `BAZIS_AUTH_COOKIE_SECURE` is off, for the lifetime of the
+  store)
+- `claim()` — the signed-in user id, once (deletes the store); used by `/auth/`
 
 **AuthStoreTokenRequired**:
 
@@ -280,7 +286,7 @@ GET /api/v1/authing/auth/
 
 ```bash
 POST /api/v1/authing/password/
-Cookie: bazis_auth=auth_token_here
+Authorization: Bearer auth_token_here
 Content-Type: application/json
 
 {
@@ -292,15 +298,16 @@ Content-Type: application/json
 **Response** (successful authentication):
 ```
 HTTP 303 See Other
-Location: /api/v1/authing/auth/?token=updated_token
-Set-Cookie: bazis_auth=updated_token; Path=/; HttpOnly
+Location: /api/v1/authing/auth/
+Set-Cookie: bazis_auth=auth_token_here; HttpOnly; Max-Age=60; Path=/; SameSite=lax; Secure
 ```
 
-**Step 3**: Client follows redirect and gets user data:
+**Step 3**: Client follows redirect with the same token and gets user data (once: the
+store is deleted, a new login needs a new store):
 
 ```bash
-GET /api/v1/authing/auth/?token=updated_token
-Cookie: bazis_auth=updated_token
+GET /api/v1/authing/auth/
+Authorization: Bearer auth_token_here
 ```
 
 **Response**:
@@ -333,6 +340,17 @@ username=user1&password=password123
 ```
 
 This token can be used in the `Authorization: Bearer <token>` header for all subsequent requests.
+
+### Logout
+
+```bash
+POST /api/v1/authing/logout/
+Authorization: Bearer auth_token_here
+```
+
+Deletes the authorization stores of the request (bearer token, cookie or query parameter)
+and the `bazis_auth` cookie; answers 204 and is idempotent. The session JWT is stateless:
+the client drops it.
 
 ## How It Works
 
@@ -395,9 +413,18 @@ This token can be used in the `Authorization: Bearer <token>` header for all sub
 
 ### Security
 
-- **HttpOnly cookie** — protection against XSS attacks
-- **Temporary tokens** — limited lifetime for auth cookie
-- **Encrypted storage** — cookie data is encrypted
+- **Single-use store** — `/auth/` gives the session of a signed-in store once
+- **Temporary tokens** — a store lives `BAZIS_AUTH_COOKIE_LIFETIME` seconds (default 600),
+  a signed-in one `BAZIS_AUTH_CLAIM_LIFETIME` (default 60); the cookie lives as long
+- **Cookie attributes** — HttpOnly, SameSite=Lax, Secure (`BAZIS_AUTH_COOKIE_SECURE=false`
+  for development over plain HTTP)
+- **No tokens in redirects** — the login redirects and the Google state do not carry the
+  store token; only `/google-auth-init/?bazis_auth=<store token>` has it in the URL
+- **Known limitation (login CSRF)** — the Google init is a GET with the store token, so an
+  attacker can send a victim `/google-auth-init/?bazis_auth=<attacker's store>`: a victim
+  who already consented in Google signs the attacker's store in without a prompt, and the
+  attacker takes the session. Planned fix: a POST init with the store token as the bearer
+  token that returns a one-time ticket for the window URL
 - **JWT tokens** — for further API operations
 
 ## Examples

@@ -14,18 +14,19 @@
 
 
 import logging
-from urllib.parse import parse_qs, urlencode
+from html import escape
+from secrets import token_hex
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
+from django.core.cache import cache
 from django.db.models import Q
+from django.utils.translation import gettext
 from django.utils.translation import gettext_lazy as _
 
 from fastapi import Body, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
-
-from starlette.status import HTTP_303_SEE_OTHER
+from fastapi.responses import HTMLResponse
 
 from pydantic import BaseModel
 
@@ -67,6 +68,10 @@ claims_options = {
     'iss': {'values': ['accounts.google.com', 'https://accounts.google.com']}
 }
 
+# the OAuth state (one-time, in the cache) -> the store token: the store token is not sent
+# to Google and does not come back in the URL of the callback
+STATE_CACHE_PREFIX = 'auth_google_state_'
+
 
 @router.get('/google-auth-init/')
 async def google_auth_init(request: Request, auth_store: AuthStoreTokenRequired = Depends()):
@@ -74,9 +79,10 @@ async def google_auth_init(request: Request, auth_store: AuthStoreTokenRequired 
 
     oauth_instance = await sync_to_async(get_oauth)()
 
-    state_params = {
-        settings.BAZIS_AUTH_COOKIE_NAME: auth_store.token.value
-    }
+    state = token_hex()
+    await sync_to_async(cache.set)(
+        f'{STATE_CACHE_PREFIX}{state}', auth_store.token.value, auth_store.lifetime
+    )
 
     redirect_uri = settings.BAZIS_G_AUTH_REDIRECT_URI or (
         settings.HOST_URL + app.router.url_path_for('google_auth_callback')
@@ -84,23 +90,32 @@ async def google_auth_init(request: Request, auth_store: AuthStoreTokenRequired 
     return await oauth_instance.google.authorize_redirect(
         request,
         redirect_uri,
-        state=urlencode(state_params),
+        state=state,
     )
 
 
-@router.get('/google-auth-callback/')
+CALLBACK_PAGE = (
+    '<!doctype html><html><head><meta charset="utf-8"><title>{title}</title></head>'
+    '<body><p>{text}</p><script>window.close()</script></body></html>'
+)
+
+
+@router.get('/google-auth-callback/', response_class=HTMLResponse)
 def google_auth_callback(request: Request):
-    # Restore state from callback
+    """
+    Google returns the window here. The result of the sign-in goes to the store; the window
+    gets a page without tokens: the client that holds the store token takes the session from
+    the auth endpoint (the store gives it once, so the window does not take it).
+    """
     state = request.query_params.get('state')
     if not state:
         raise HTTPException(status_code=400, detail="Missing state parameter")
 
-    # Decode state and extract BAZIS_AUTH_COOKIE_NAME
-    state_data = parse_qs(state)
-    auth_store_value = state_data.get(settings.BAZIS_AUTH_COOKIE_NAME)
-    if not auth_store_value:
-        raise HTTPException(status_code=400, detail="Missing token value in state")
-    auth_store_value = auth_store_value[0]
+    state_key = f'{STATE_CACHE_PREFIX}{state}'
+    auth_store_value = cache.get(state_key)
+    # the state is used once
+    if not auth_store_value or not cache.delete(state_key):
+        raise HTTPException(status_code=400, detail="Invalid or expired state")
 
     auth_store = AuthStoreTokenRequired(token_param=auth_store_value)
 
@@ -113,7 +128,19 @@ def google_auth_callback(request: Request):
     except Exception:
         logger.exception('Google authentication: the access token was not received')
         auth_store.set_error('GOOGLE_AUTH_ERROR', 'Google authentication failed')
-    return google_create_user(request, auth_store, google_token)
+    signed_in = google_sign_in(request, auth_store, google_token)
+
+    page = CALLBACK_PAGE.format(
+        title=escape(gettext('Google Authentication')),
+        text=escape(gettext('The sign-in is finished: return to the application.')),
+    )
+    response = HTMLResponse(page)
+    # the cookie of the store only after authlib accepted the state (it is in the session of
+    # this browser) and the sign-in succeeded: a callback URL with the state of another
+    # browser must not plant that store in this one
+    if signed_in:
+        auth_store.response_set_cookie(response)
+    return response
 
 
 class GoogleTokens(BaseModel):
@@ -171,9 +198,11 @@ def google_get_user(google_user: dict):
     return user
 
 
-def google_create_user(request: Request, auth_store, google_token: dict = None):
-    from bazis.core.app import app
-
+def google_sign_in(request: Request, auth_store, google_token: dict = None) -> bool:
+    """
+    Signs the store in with the Google tokens, or records the error of the sign-in. True if
+    the store is signed in.
+    """
     if google_token:
         try:
             oauth_instance = get_oauth()
@@ -201,10 +230,11 @@ def google_create_user(request: Request, auth_store, google_token: dict = None):
             auth_store.set_error('GOOGLE_AUTH_ERROR', 'Google authentication failed')
         else:
             auth_store.login(user, request, AUTH_CODE)
+            return True
+    return False
 
-    return auth_store.response_set_cookie(
-        RedirectResponse(
-            app.router.url_path_for('auth') + f'?{auth_store.as_param}',
-            status_code=HTTP_303_SEE_OTHER,
-        )
-    )
+
+def google_create_user(request: Request, auth_store, google_token: dict = None):
+    """Signs the store in with the Google tokens and answers 303 to the auth endpoint."""
+    google_sign_in(request, auth_store, google_token)
+    return auth_store.redirect_to_auth()
