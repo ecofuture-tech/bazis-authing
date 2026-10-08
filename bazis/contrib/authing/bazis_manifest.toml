@@ -16,7 +16,7 @@ pairs_well = ["bazis-permit"]
 [[extension_points]]
 name = "auth router"
 import = "bazis.contrib.authing.routes.router"
-use_when = "always: GET /auth/ (register bazis.contrib.authing.router)"
+use_when = "always: GET /auth/ and POST /logout/ (register bazis.contrib.authing.router)"
 
 [[extension_points]]
 name = "password router"
@@ -36,7 +36,7 @@ use_when = "the dependency of the login endpoint of an own sign-in service"
 [[extension_points]]
 name = "AuthStore"
 import = "bazis.contrib.authing.service.AuthStore"
-use_when = "the authorization store: login(), set_error(), response_set_cookie()"
+use_when = "the authorization store: login(), set_error(), redirect_to_auth()"
 
 [[extension_points]]
 name = "google_get_user"
@@ -58,7 +58,13 @@ text = "the Google OAuth client is built once per process: restart after changin
 text = "without BAZIS_G_AUTH_REDIRECT_URI the Google redirect URI is HOST_URL + the callback path: set HOST_URL"
 
 [[pitfalls]]
-text = "until the store expires (BAZIS_AUTH_COOKIE_LIFETIME) GET /auth/ with the store token returns a new session token: drop it on logout"
+text = "a store gives its session once: after GET /auth/ returned it, the store token is spent and a new login needs a new store"
+
+[[pitfalls]]
+text = "the Google callback does not redirect to /auth/: the client that holds the store token asks GET /auth/ until the store is signed in"
+
+[[pitfalls]]
+text = "the store cookie is Secure: set BS_BAZIS_AUTH_COOKIE_SECURE=false for development over plain HTTP"
 
 [[pitfalls]]
 text = "the authorization store lives in the default cache: all processes must share it (Redis)"

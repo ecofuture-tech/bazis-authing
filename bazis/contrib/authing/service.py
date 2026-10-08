@@ -23,9 +23,11 @@ from django.core.cache import cache
 from django.utils.functional import cached_property
 
 from fastapi import Cookie, Depends, Header, Query
+from fastapi.responses import RedirectResponse
 from fastapi.security.utils import get_authorization_scheme_param
 
 from starlette.requests import Request
+from starlette.status import HTTP_303_SEE_OTHER
 
 import jwt
 
@@ -108,6 +110,12 @@ def get_token_header(authorization: str | None = Header(default=None, alias='Aut
 
 
 class AuthStore(UserDict):
+    """
+    The authorization store of a sign-in: its token (`AuthToken`) is given to the client,
+    its data lives in the default cache. A store is single-use: `claim()` deletes the store
+    that gives a session, so that its token, which travels in URLs, gives no other one.
+    """
+
     token = None
     cache_prefix = 'auth_store_'
     token_required = False
@@ -120,12 +128,14 @@ class AuthStore(UserDict):
     ):
         super().__init__()
         self.push_toggle = CtxToggle()
+        # the cookie holds a store token (not a session token): dropped once it is spent
+        self.store_in_cookie = AuthToken.parse(token_cookie) is not None
         self.token = AuthToken.parse(
             token_param or token_header or token_cookie, required=self.token_required
         )
 
         if self.token:
-            self.data = cache.get(f'{self.cache_prefix}{self.token.key}')
+            self.data = cache.get(self.cache_key)
             if self.data is None:
                 if self.token_required:
                     raise JsonApi401Exception(detail='Token has been expired')
@@ -133,31 +143,91 @@ class AuthStore(UserDict):
                     self.token = None
 
         if not self.token:
-            self.token = AuthToken.new()
-            self.data_reset()
+            self.renew()
 
-    @cached_property
-    def cookie(self):
-        # the authorization cookie is set indefinitely
-        return settings.BAZIS_AUTH_COOKIE_NAME, self.token.value, 31536000
+    @property
+    def cache_key(self):
+        return f'{self.cache_prefix}{self.token.key}'
 
-    @cached_property
+    @property
+    def lifetime(self) -> int:
+        """
+        Seconds the store lives: a signed-in store only waits for its session to be taken.
+        """
+        if self.user_id is None:
+            return settings.BAZIS_AUTH_COOKIE_LIFETIME
+        return settings.BAZIS_AUTH_CLAIM_LIFETIME
+
+    @property
     def as_param(self):
+        """
+        Deprecated: the store token in a query string ends up in access logs. Kept for own
+        services written for bazis-authing < 2.6 (use `redirect_to_auth()`); remove in 3.0.
+        """
         return f'{settings.BAZIS_AUTH_COOKIE_NAME}={self.token.value}'
 
+    @staticmethod
+    def _cookie_attributes() -> dict:
+        return {
+            'path': '/',
+            'httponly': True,
+            'secure': settings.BAZIS_AUTH_COOKIE_SECURE,
+            'samesite': 'lax',
+        }
+
     def response_set_cookie(self, response):
-        key, value, max_age = self.cookie
-        # set the cookie
-        response.set_cookie(key=key, value=value, max_age=max_age)
+        """Sets the store token as the cookie, for as long as the store lives."""
+        response.set_cookie(
+            key=settings.BAZIS_AUTH_COOKIE_NAME,
+            value=self.token.value,
+            max_age=self.lifetime,
+            **self._cookie_attributes(),
+        )
         return response
+
+    @classmethod
+    def response_delete_cookie(cls, response):
+        response.delete_cookie(key=settings.BAZIS_AUTH_COOKIE_NAME, **cls._cookie_attributes())
+        return response
+
+    def redirect_to_auth(self):
+        """
+        The answer of a login: 303 to the auth endpoint, without the store token in the URL
+        (the client follows it with the same bearer token or the cookie, which is set).
+        """
+        from bazis.core.app import app
+
+        return self.response_set_cookie(
+            RedirectResponse(app.router.url_path_for('auth'), status_code=HTTP_303_SEE_OTHER)
+        )
+
+    def renew(self):
+        """Replaces the store with a new empty one."""
+        self.token = AuthToken.new()
+        self.data_reset()
+
+    def claim(self):
+        """
+        The id of the signed-in user of the store, once: the store is deleted. The deletion
+        in the cache is atomic, so of concurrent requests only one gets the id; the others
+        get None and a new store.
+        """
+        if (user_id := self.user_id) is None:
+            return None
+        if cache.delete(self.cache_key):
+            return user_id
+        self.renew()
+        return None
+
+    @classmethod
+    def discard(cls, token_value: str | None):
+        """Deletes the store of the token, if it is a store token."""
+        if token := AuthToken.parse(token_value):
+            cache.delete(f'{cls.cache_prefix}{token.key}')
 
     def _push_data(self):
         if self.push_toggle.allow:
-            cache.set(
-                f'{self.cache_prefix}{self.token.key}',
-                self.data,
-                settings.BAZIS_AUTH_COOKIE_LIFETIME,
-            )
+            cache.set(self.cache_key, self.data, self.lifetime)
 
     def data_reset(self):
         self.data = {}

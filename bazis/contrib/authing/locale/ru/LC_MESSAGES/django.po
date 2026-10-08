@@ -74,5 +74,17 @@ msgstr ""
 msgid "Login/Password"
 msgstr "Логин/пароль"
 
+#: conf.py
+msgid "Seconds a signed-in authorization store waits for its session to be taken"
+msgstr "Сколько секунд авторизованное хранилище ждёт получения сессии"
+
+#: conf.py
+msgid "Send the authorization cookie over HTTPS only"
+msgstr "Передавать куки авторизации только по HTTPS"
+
+#: services/google/routes.py
+msgid "The sign-in is finished: return to the application."
+msgstr "Вход завершён: вернитесь в приложение."
+
 #~ msgid "Name of the authorization cookie"
 #~ msgstr "Наименование авторизационной куки"

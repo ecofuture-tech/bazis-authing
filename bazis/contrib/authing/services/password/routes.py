@@ -17,10 +17,9 @@ from django.contrib.auth.signals import user_logged_in
 from django.utils.translation import gettext_lazy as _
 
 from fastapi import Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
-from starlette.status import HTTP_303_SEE_OTHER, HTTP_401_UNAUTHORIZED
+from starlette.status import HTTP_401_UNAUTHORIZED
 
 from bazis.contrib.authing.service import AuthStoreTokenRequired
 from bazis.core.routing import BazisRouter
@@ -36,16 +35,13 @@ router = BazisRouter(prefix='/password', tags=[_('Authentication')])
 
 @router.post('/')
 def password_auth(request: Request, data: PasswordRequest, auth_store: AuthStoreTokenRequired = Depends()):
-    from bazis.core.app import app
     # clear the storage
     auth_store.data_reset()
     if user := authenticate(username=data.username, password=data.password):
         auth_store.login(user, request, AUTH_CODE)
     else:
         auth_store.set_error('USERNAME_PASSWORD_ERROR', 'Credentials are invalid')
-    return auth_store.response_set_cookie(
-        RedirectResponse(app.router.url_path_for('auth') + f'?{auth_store.as_param}', status_code=HTTP_303_SEE_OTHER)
-    )
+    return auth_store.redirect_to_auth()
 
 
 @router.post('/token/', response_model=TokenResponse)

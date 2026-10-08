@@ -15,14 +15,17 @@
 from django.conf import settings
 from django.utils.translation import gettext as _
 
-from fastapi import Cookie, Depends, Query
+from fastapi import Cookie, Depends, Query, Request, Response
 from fastapi.security import OAuth2PasswordBearer
 
 from starlette.status import (
     HTTP_100_CONTINUE,
+    HTTP_204_NO_CONTENT,
     HTTP_401_UNAUTHORIZED,
     HTTP_422_UNPROCESSABLE_CONTENT,
 )
+
+from asgiref.sync import async_to_sync
 
 from bazis.contrib.users import get_user_model
 from bazis.contrib.users.service import get_token_data, get_user_from_token, get_user_optional
@@ -31,7 +34,7 @@ from bazis.core.routing import BazisRouter
 from bazis.core.utils.imp import import_module
 
 from .schemas import AuthResponse
-from .service import AuthStore
+from .service import AuthStore, get_token_header
 
 
 User = get_user_model()
@@ -63,13 +66,22 @@ def get_user_lenient(token_data: dict = Depends(get_token_data_lenient)):
 
 @router.get('/auth/', response_model=AuthResponse)
 def auth(
+    request: Request,
+    response: Response,
     auth_store: AuthStore = Depends(),
     user: User = Depends(get_user_lenient),
     token_data: dict = Depends(get_token_data_lenient),
 ):
+    auth_type = token_data.get('auth_type')
     if user.is_anonymous:
-        if user_id := auth_store.user_id:
+        # the session of a signed-in store is given once: the store is spent
+        if user_id := auth_store.claim():
+            auth_type = auth_store.auth_type
             user = User.objects.filter(id=user_id, is_active=True).first()
+            if user is None:
+                auth_store.renew()
+            elif auth_store.store_in_cookie:
+                AuthStore.response_delete_cookie(response)
 
     services = []
     for service_path in settings.BAZIS_AUTH_KINDS:
@@ -79,8 +91,6 @@ def auth(
             pass
 
     if user and not user.is_anonymous:
-        auth_type = auth_store.auth_type or token_data.get('auth_type')
-
         return AuthResponse(
             user_id=user.id,
             username=user.username,
@@ -137,4 +147,25 @@ def auth(
                 )
             )
 
-    raise JsonApiBazisException(errors, cookies=[auth_store.cookie])
+    # the error answer of the application, with the attributes of the store cookie, which
+    # the cookies of JsonApiBazisException do not have
+    handler = request.app.exception_handlers[JsonApiBazisException]
+    return auth_store.response_set_cookie(
+        async_to_sync(handler)(request, JsonApiBazisException(errors))
+    )
+
+
+@router.post('/logout/', status_code=HTTP_204_NO_CONTENT, response_class=Response)
+def auth_logout(
+    token_param: str | None = Query(default=None, alias=settings.BAZIS_AUTH_COOKIE_NAME),
+    token_cookie: str | None = Cookie(default=None, alias=settings.BAZIS_AUTH_COOKIE_NAME),
+    token_header: str | None = Depends(get_token_header),
+):
+    """
+    Deletes the authorization stores of the request (bearer token, cookie or query
+    parameter) and the cookie `BAZIS_AUTH_COOKIE_NAME`. Idempotent. A session token is
+    stateless: the client drops it.
+    """
+    for value in (token_param, token_header, token_cookie):
+        AuthStore.discard(value)
+    return AuthStore.response_delete_cookie(Response(status_code=HTTP_204_NO_CONTENT))

@@ -21,6 +21,12 @@ from bazis.core.utils.schemas import BazisSettings
 
 class Settings(BazisSettings):
     BAZIS_AUTH_COOKIE_LIFETIME: int = Field(600, title=_('Authorization cookie lifetime'))
+    BAZIS_AUTH_CLAIM_LIFETIME: int = Field(
+        60, title=_('Seconds a signed-in authorization store waits for its session to be taken')
+    )
+    BAZIS_AUTH_COOKIE_SECURE: bool = Field(
+        True, title=_('Send the authorization cookie over HTTPS only')
+    )
     BAZIS_AUTH_KINDS: list[str] = Field(
         [
             'bazis.contrib.authing.services.password',
