@@ -67,8 +67,8 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
 4. `POST /logout/`: deletes the stores of the request (bearer token, cookie, query
    parameter) and the cookie; 204, idempotent. The session JWT is stateless: the client
    drops it.
-- `POST /password/token/` (OAuth2 password form) returns
-  `{"access_token", "token_type": "bearer"}` directly, without the store.
+- `POST /password/token/` (deprecated, removed in 3.0) is the token endpoint of bazis-users
+  (`BAZIS_OPENAPI_TOKEN_URL`) under this path: use that one.
 
 ## Security properties
 

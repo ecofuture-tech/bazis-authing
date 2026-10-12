@@ -544,3 +544,31 @@ def test_forged_google_callback_sets_no_cookie(sample_app, monkeypatch):
     store = AuthStore(RequestTokens(param=attacker_store))
     assert store.user_id is None
     assert [err.code for err in store.errors] == ['GOOGLE_AUTH_ERROR']
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_token_endpoint_of_the_password_service(sample_app):
+    """
+    `POST /password/token/` is the token endpoint of bazis-users under the path of the
+    password service (deprecated), with its operation id.
+    """
+    from starlette.testclient import TestClient
+
+    User.objects.create_user('token_user', password='weak_password_1')
+    client = TestClient(sample_app)
+    url = '/api/v1/authing/password/token/'
+
+    response = client.post(url, data={'username': 'token_user', 'password': 'weak_password_1'})
+    assert response.status_code == 200
+    assert response.json()['token_type'] == 'bearer'
+    response = client.get('/api/v1/authing/auth/', headers={
+        'Authorization': f'Bearer {response.json()["access_token"]}'
+    })
+    assert response.json()['username'] == 'token_user'
+
+    response = client.post(url, data={'username': 'token_user', 'password': 'wrong'})
+    assert response.status_code == 401
+
+    operation = sample_app.openapi()['paths'][url]['post']
+    assert operation['operationId'] == 'token_auth_api_v1_authing_password_token__post'
+    assert operation['deprecated'] is True

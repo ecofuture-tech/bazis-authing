@@ -158,10 +158,11 @@ Built-in module for username and password authentication.
    - On successful authentication, sets cookie and redirects to `/auth/`
    - On failed authentication, returns error
 
-2. **POST /api/v1/authing/password/token/** — get JWT token for Swagger/API
+2. **POST /api/v1/authing/password/token/** — deprecated, removed in 3.0: the token
+   endpoint of bazis-users (`POST BAZIS_OPENAPI_TOKEN_URL`, which Swagger UI uses) under
+   this path
    - Accepts `username` and `password` via `OAuth2PasswordRequestForm`
    - Returns JWT token directly without cookie
-   - Used for authentication in Swagger UI
 
 **Request schema** (POST /password/):
 ```json
@@ -171,13 +172,7 @@ Built-in module for username and password authentication.
 }
 ```
 
-**Response schema** (POST /password/token/):
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer"
-}
-```
+The token endpoint answers `{"access_token": "...", "token_type": "bearer"}`.
 
 ### AuthStore
 
@@ -322,10 +317,11 @@ Authorization: Bearer auth_token_here
 
 ### Getting JWT Token
 
-For direct JWT token retrieval (e.g., for mobile apps or Swagger):
+For direct JWT token retrieval (e.g., for mobile apps or Swagger), the token endpoint of
+bazis-users (`BAZIS_OPENAPI_TOKEN_URL`, default `/api/openapi-token/`):
 
 ```bash
-POST /api/v1/authing/password/token/
+POST /api/openapi-token/
 Content-Type: application/x-www-form-urlencoded
 
 username=user1&password=password123

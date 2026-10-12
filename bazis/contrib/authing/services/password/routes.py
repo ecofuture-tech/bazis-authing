@@ -13,19 +13,20 @@
 # limitations under the License.
 
 from django.contrib.auth import authenticate, get_user_model
-from django.contrib.auth.signals import user_logged_in
 from django.utils.translation import gettext_lazy as _
 
-from fastapi import Depends, HTTPException, Request
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import Depends, Request
 
 from starlette.status import HTTP_401_UNAUTHORIZED
 
 from bazis.contrib.authing.service import AuthStoreTokenRequired
+from bazis.contrib.users.schemas import TokenResponse
+from bazis.contrib.users.token import token_auth
+from bazis.core.errors import SchemaErrors
 from bazis.core.routing import BazisRouter
 
 from . import AUTH_CODE
-from .schemas import PasswordRequest, TokenResponse
+from .schemas import PasswordRequest
 
 
 User = get_user_model()
@@ -44,16 +45,11 @@ def password_auth(request: Request, data: PasswordRequest, auth_store: AuthStore
     return auth_store.redirect_to_auth()
 
 
-@router.post('/token/', response_model=TokenResponse)
-def token_auth(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
-    if not (user := authenticate(username=form_data.username, password=form_data.password)):
-        raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
-            detail='Credentials are invalid',
-            headers={'WWW-Authenticate': 'Bearer'},
-        )
-    user_logged_in.send(sender=user.__class__, request=request, user=user)
-    return {
-        'access_token': user.jwt_build(auth_type='password'),
-        'token_type': 'bearer'
-    }
+# the token endpoint of bazis-users (POST BAZIS_OPENAPI_TOKEN_URL) under the path of the
+# password service, for the clients written for bazis-authing < 2.7: remove in 3.0
+router.post(
+    '/token/',
+    response_model=TokenResponse,
+    responses={HTTP_401_UNAUTHORIZED: {'model': SchemaErrors}},
+    deprecated=True,
+)(token_auth)
