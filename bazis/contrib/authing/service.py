@@ -22,16 +22,20 @@ from django.contrib.auth.signals import user_logged_in
 from django.core.cache import cache
 from django.utils.functional import cached_property
 
-from fastapi import Cookie, Depends, Header, Query
+from fastapi import Depends
 from fastapi.responses import RedirectResponse
-from fastapi.security.utils import get_authorization_scheme_param
 
 from starlette.requests import Request
 from starlette.status import HTTP_303_SEE_OTHER
 
 import jwt
 
-from bazis.contrib.users.service import get_anonymous_user_model, get_user_model
+from bazis.contrib.users.service import (
+    RequestTokens,
+    get_anonymous_user_model,
+    get_request_tokens,
+    get_user_model,
+)
 from bazis.core.errors import JsonApi401Exception
 from bazis.core.utils.functools import CtxToggle
 
@@ -103,12 +107,6 @@ class AuthError:
     detail: str
 
 
-def get_token_header(authorization: str | None = Header(default=None, alias='Authorization')):
-    scheme, param = get_authorization_scheme_param(authorization)
-    if authorization and scheme.lower() == 'bearer':
-        return param
-
-
 class AuthStore(UserDict):
     """
     The authorization store of a sign-in: its token (`AuthToken`) is given to the client,
@@ -120,19 +118,12 @@ class AuthStore(UserDict):
     cache_prefix = 'auth_store_'
     token_required = False
 
-    def __init__(
-        self,
-        token_param: str | None = Query(default=None, alias=settings.BAZIS_AUTH_COOKIE_NAME),
-        token_cookie: str | None = Cookie(default=None, alias=settings.BAZIS_AUTH_COOKIE_NAME),
-        token_header: str | None = Depends(get_token_header),
-    ):
+    def __init__(self, tokens: RequestTokens = Depends(get_request_tokens)):
         super().__init__()
         self.push_toggle = CtxToggle()
         # the cookie holds a store token (not a session token): dropped once it is spent
-        self.store_in_cookie = AuthToken.parse(token_cookie) is not None
-        self.token = AuthToken.parse(
-            token_param or token_header or token_cookie, required=self.token_required
-        )
+        self.store_in_cookie = AuthToken.parse(tokens.cookie) is not None
+        self.token = AuthToken.parse(tokens.token, required=self.token_required)
 
         if self.token:
             self.data = cache.get(self.cache_key)

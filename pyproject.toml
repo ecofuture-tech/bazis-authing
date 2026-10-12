@@ -34,7 +34,8 @@ classifiers = [
 ]
 dependencies = [
     "bazis>=2.5.0",
-    "bazis-users>=2.3.0",
+    # get_request_tokens, session_token_data
+    "bazis-users>=2.9.0",
     "PyJWT>=2.10",
     "authlib>=1.3",
     # the HTTP client of the authlib integration

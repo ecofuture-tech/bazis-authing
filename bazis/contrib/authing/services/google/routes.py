@@ -34,6 +34,7 @@ from asgiref.sync import async_to_sync, sync_to_async
 from authlib.integrations.starlette_client import OAuth
 
 from bazis.contrib.authing.service import AuthStoreTokenRequired
+from bazis.contrib.users.service import RequestTokens
 from bazis.core.routing import BazisRouter
 
 from . import AUTH_CODE
@@ -117,7 +118,7 @@ def google_auth_callback(request: Request):
     if not auth_store_value or not cache.delete(state_key):
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
-    auth_store = AuthStoreTokenRequired(token_param=auth_store_value)
+    auth_store = AuthStoreTokenRequired(RequestTokens(param=auth_store_value))
 
     google_token = None
     try:

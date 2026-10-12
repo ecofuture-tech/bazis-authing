@@ -16,6 +16,7 @@ import pytest
 from bazis_test_utils.utils import get_api_client
 
 from bazis.contrib.users import get_user_model
+from bazis.contrib.users.service import RequestTokens
 
 
 User = get_user_model()
@@ -106,7 +107,7 @@ def test_auth_with_foreign_token(sample_app):
 def test_auth_errors_accumulate(sample_app):
     from bazis.contrib.authing.service import AuthStore
 
-    store = AuthStore(token_param=None, token_cookie=None, token_header=None)
+    store = AuthStore(RequestTokens())
     store.set_error('FIRST', 'first')
     store.set_error('SECOND', 'second')
     assert [err.code for err in store.errors] == ['FIRST', 'SECOND']
@@ -168,7 +169,7 @@ def test_google_sign_in(sample_app, monkeypatch):
     store_token = get_api_client(sample_app).get('/api/v1/authing/auth/').json()['errors'][0][
         'meta'
     ]['token']
-    auth_store = AuthStoreTokenRequired(token_param=store_token)
+    auth_store = AuthStoreTokenRequired(RequestTokens(param=store_token))
 
     response = google_routes.google_create_user(
         None, auth_store, {'id_token': 'id-token', 'access_token': 'access-token'}
@@ -320,8 +321,8 @@ def test_store_claim_is_atomic(sample_app):
     store = new_store(sample_app)
     assert password_login(sample_app, store).status_code == 303
 
-    first = AuthStore(token_param=store, token_cookie=None, token_header=None)
-    second = AuthStore(token_param=store, token_cookie=None, token_header=None)
+    first = AuthStore(RequestTokens(param=store))
+    second = AuthStore(RequestTokens(param=store))
     assert first.user_id == second.user_id == user.id
     assert first.claim() == user.id
     assert second.claim() is None
@@ -461,7 +462,7 @@ def test_google_flow_keeps_the_store_token_out_of_urls(sample_app, monkeypatch, 
 
     store = new_store(sample_app)
     asyncio.run(
-        google_routes.google_auth_init(None, AuthStoreTokenRequired(token_param=store))
+        google_routes.google_auth_init(None, AuthStoreTokenRequired(RequestTokens(param=store)))
     )
     state = sent['state']
     assert state and store not in state
@@ -540,6 +541,6 @@ def test_forged_google_callback_sets_no_cookie(sample_app, monkeypatch):
     )
     assert response.status_code == 200
     assert 'set-cookie' not in response.headers
-    store = AuthStore(token_param=attacker_store, token_cookie=None, token_header=None)
+    store = AuthStore(RequestTokens(param=attacker_store))
     assert store.user_id is None
     assert [err.code for err in store.errors] == ['GOOGLE_AUTH_ERROR']
