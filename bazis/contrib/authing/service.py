@@ -15,6 +15,7 @@
 import logging
 from collections import UserDict
 from dataclasses import asdict, dataclass
+from importlib import import_module
 from secrets import token_hex
 
 from django.conf import settings
@@ -30,12 +31,8 @@ from starlette.status import HTTP_303_SEE_OTHER
 
 import jwt
 
-from bazis.contrib.users.service import (
-    RequestTokens,
-    get_anonymous_user_model,
-    get_request_tokens,
-    get_user_model,
-)
+from bazis.contrib.users import get_anonymous_user_model, get_user_model
+from bazis.contrib.users.service import RequestTokens, get_request_tokens
 from bazis.core.errors import JsonApi401Exception
 from bazis.core.utils.functools import CtxToggle
 
@@ -43,6 +40,20 @@ from bazis.core.utils.functools import CtxToggle
 LOG = logging.getLogger(__name__)
 User = get_user_model()
 AnonymousUser = get_anonymous_user_model()
+
+
+def auth_services() -> tuple[list, list[str]]:
+    """
+    The modules of BAZIS_AUTH_KINDS that import, and the names of those that do not.
+    """
+    services, missing = [], []
+    # the settings of the package are missing if BS_BAZIS_APPS does not list it
+    for path in getattr(settings, 'BAZIS_AUTH_KINDS', []):
+        try:
+            services.append(import_module(path))
+        except ImportError:
+            missing.append(path)
+    return services, missing
 
 
 @dataclass

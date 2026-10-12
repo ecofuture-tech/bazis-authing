@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from django.conf import settings
 from django.utils.translation import gettext as _
 
 from fastapi import Depends, Request, Response
@@ -36,10 +35,9 @@ from bazis.contrib.users.service import (
 )
 from bazis.core.errors import JsonApi401Exception, JsonApiBazisError, JsonApiBazisException
 from bazis.core.routing import BazisRouter
-from bazis.core.utils.imp import import_module
 
 from .schemas import AuthResponse
-from .service import AuthStore
+from .service import AuthStore, auth_services
 
 
 User = get_user_model()
@@ -82,12 +80,7 @@ def auth(
             elif auth_store.store_in_cookie:
                 AuthStore.response_delete_cookie(response)
 
-    services = []
-    for service_path in settings.BAZIS_AUTH_KINDS:
-        try:
-            services.append(import_module(service_path))
-        except ImportError:
-            pass
+    services = auth_services()[0]
 
     if user and not user.is_anonymous:
         return AuthResponse(
@@ -97,14 +90,14 @@ def auth(
             last_name=user.last_name,
             email=user.email,
             token=user.jwt_build(auth_type=auth_type),
-            logout_actions=(
-                [
+            logout_actions=next(
+                (
                     s.get_logout_actions()
                     for s in services
                     if s.AUTH_CODE == auth_type and hasattr(s, 'get_logout_actions')
-                ]
-                + [None]
-            )[0],
+                ),
+                None,
+            ),
         )
 
     errors = [

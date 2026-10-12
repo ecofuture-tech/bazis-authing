@@ -572,3 +572,22 @@ def test_the_token_endpoint_of_the_password_service(sample_app):
     operation = sample_app.openapi()['paths'][url]['post']
     assert operation['operationId'] == 'token_auth_api_v1_authing_password_token__post'
     assert operation['deprecated'] is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_logout_actions_of_the_service_of_the_session(sample_app, monkeypatch):
+    """
+    `GET /auth/` with a session gives the logout actions of the service it was signed in
+    with (`get_logout_actions`, optional), else none.
+    """
+    from bazis.contrib.authing.services import password
+
+    user = User.objects.create_user('logout_user', password='weak_password_1')
+    client = get_api_client(sample_app, user.jwt_build(auth_type='password'))
+    assert client.get('/api/v1/authing/auth/').json()['logout_actions'] is None
+
+    actions = [{'url': '/api/v1/authing/password/logout/', 'method': 'POST'}]
+    monkeypatch.setattr(password, 'get_logout_actions', lambda: actions, raising=False)
+    assert client.get('/api/v1/authing/auth/').json()['logout_actions'] == actions
+    client = get_api_client(sample_app, user.jwt_build(auth_type='google'))
+    assert client.get('/api/v1/authing/auth/').json()['logout_actions'] is None

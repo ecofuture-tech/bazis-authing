@@ -16,26 +16,11 @@
 Django system checks of bazis-authing (see `manage.py bazis_doctor`).
 """
 
-from importlib import import_module
-
-from django.conf import settings
 from django.core.checks import Error, Warning, register
 
 from starlette.routing import NoMatchFound
 
-
-def auth_services() -> tuple[list, list[str]]:
-    """
-    The modules of BAZIS_AUTH_KINDS that import, and the names of those that do not.
-    """
-    services, missing = [], []
-    # the settings of the package are missing if BS_BAZIS_APPS does not list it
-    for path in getattr(settings, 'BAZIS_AUTH_KINDS', []):
-        try:
-            services.append(import_module(path))
-        except ImportError:
-            missing.append(path)
-    return services, missing
+from .service import auth_services
 
 
 @register()
