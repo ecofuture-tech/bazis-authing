@@ -21,7 +21,7 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 
 from bazis.contrib.authing.service import AuthStoreTokenRequired
 from bazis.contrib.users.schemas import TokenResponse
-from bazis.contrib.users.token import token_auth
+from bazis.contrib.users.service import token_auth
 from bazis.core.errors import SchemaErrors
 from bazis.core.routing import BazisRouter
 

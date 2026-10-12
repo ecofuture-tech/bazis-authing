@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from bazis.contrib.authing.checks import check_auth_kinds, check_auth_routes
@@ -20,6 +25,27 @@ from bazis.core.introspect import validate_manifest
 
 def test_manifest_is_valid():
     assert validate_manifest('bazis.contrib.authing') == []
+
+
+def test_manifest_is_valid_before_the_application_is_built():
+    """
+    In a new process, where nothing built the application yet: the routes of the package
+    must import without it (the application imports the router module of the project,
+    which imports them).
+    """
+    code = (
+        'import django; django.setup(); '
+        'from bazis.core.introspect import validate_manifest; '
+        "print(validate_manifest('bazis.contrib.authing'))"
+    )
+    done = subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=Path(__file__).resolve().parent.parent / 'sample',
+        env={**os.environ, 'DJANGO_SETTINGS_MODULE': 'sample.settings'},
+        capture_output=True, text=True, timeout=300,
+    )
+    assert done.returncode == 0, done.stderr[-3000:]
+    assert done.stdout.strip().splitlines()[-1] == '[]', done.stdout[-3000:]
 
 
 def test_auth_kinds_check(settings):
