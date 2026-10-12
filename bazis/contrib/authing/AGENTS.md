@@ -50,7 +50,8 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
 2. Sign in with the store token (`Authorization: Bearer`, the cookie or the query parameter
    `BAZIS_AUTH_COOKIE_NAME`; missing or expired: 401):
    - `POST /password/` JSON `{"username", "password"}`;
-   - Google SDK (mobile): `POST /google-auth-verify/` JSON `{"id_token", "access_token"}`.
+   - Google SDK (mobile): `POST /google-auth-verify/` JSON `{"id_token", "access_token"}`
+     (the query parameters of the same names are deprecated and removed in 3.0).
    Both answer 303 to `/auth/` (no token in the URL) and set the cookie: follow it with the
    same bearer token or the cookie.
    - Google in a browser: open `GET /google-auth-init/?bazis_auth=<store token>` in a window
@@ -103,5 +104,6 @@ A module listed in `BAZIS_AUTH_KINDS` with `AUTH_CODE`, `get_login_action()` (op
 `auth_store: AuthStoreTokenRequired = Depends()`, calls
 `auth_store.login(user, request, AUTH_CODE)` (or `auth_store.set_error(code, detail)`) and
 returns `auth_store.redirect_to_auth()` (303 to `/auth/` with the cookie), as
-`services/password/routes.py` does. `auth_store.as_param` (the store token as a query
-parameter) is deprecated: it puts the token in URLs.
+`services/password/routes.py` does. `get_logout_actions()` returns a list of actions
+(`logout_actions` of `GET /auth/`). `auth_store.as_param` (the store token as a query
+parameter) is deprecated and removed in 3.0: it puts the token in URLs.

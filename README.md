@@ -54,7 +54,7 @@ router.register(prefix='/authing', arg=password_router)
 
 - **Universal `/auth/` endpoint** — central point for checking authentication status and getting available login methods
 - **Built-in password authentication** — ready-to-use module for username/password authentication
-- **AuthStore** — cookie-based authentication state storage system
+- **AuthStore** — the state of a sign-in, kept in the cache under a store token
 - **Support for multiple authentication methods** — easily add OAuth, SAML, LDAP, and other providers
 - **JWT integration** — automatic JWT token generation after successful authentication
 
@@ -176,12 +176,15 @@ The token endpoint answers `{"access_token": "...", "token_type": "bearer"}`.
 
 ### AuthStore
 
-Cookie-based authentication state storage system.
+The state of a sign-in: the data lives in the default cache (`auth_store_<key>`), the
+client holds only the store token (a JWT signed with `SECRET_KEY`, with the random key as
+`sub` and no expiration), as the bearer token, the cookie or the query parameter
+`BAZIS_AUTH_COOKIE_NAME`.
 
 **Location**: `bazis.contrib.authing.service.AuthStore`
 
 **Purpose**:
-- Store temporary authentication data in encrypted cookie
+- Store temporary authentication data in the cache
 - Track multi-step authentication progress
 - Pass errors between requests
 
@@ -589,11 +592,13 @@ def get_login_action():
     }
 
 def get_logout_actions():
-    """Returns logout actions (optional)"""
-    return {
-        'url': '/api/v1/authing/oauth/logout/',
-        'method': 'POST',
-    }
+    """Returns logout actions (optional): a list of actions"""
+    return [
+        {
+            'url': '/api/v1/authing/oauth/logout/',
+            'method': 'POST',
+        },
+    ]
 
 @router.get('/')
 def oauth_login():

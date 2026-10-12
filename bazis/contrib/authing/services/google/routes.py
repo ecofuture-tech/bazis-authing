@@ -161,6 +161,7 @@ def google_auth_verify(
     Signs in with the tokens a client received from Google itself (e.g. a mobile SDK).
     The tokens are expected in the body: in the query string they end up in access logs.
     """
+    # the tokens in the query string: kept for the clients of bazis-authing < 2.3, remove in 3.0
     if tokens is None:
         if not id_token or not access_token:
             raise HTTPException(status_code=400, detail="Missing id_token or access_token")
