@@ -23,8 +23,9 @@ from django.contrib.auth.signals import user_logged_in
 from django.core.cache import cache
 from django.utils.functional import cached_property
 
-from fastapi import Depends
+from fastapi import Depends, Header
 from fastapi.responses import RedirectResponse
+from fastapi.security.utils import get_authorization_scheme_param
 
 from starlette.requests import Request
 from starlette.status import HTTP_303_SEE_OTHER
@@ -116,6 +117,18 @@ class AuthActions:
 class AuthError:
     code: str
     detail: str
+
+
+def get_token_header(authorization: str | None = Header(default=None, alias='Authorization')):
+    """
+    Deprecated: the bearer token of `Authorization`, a FastAPI dependency. The stores read
+    their tokens with `get_request_tokens` of bazis-users (`RequestTokens.header`); kept for
+    the projects that read a bearer token of their own with it (bazis-authing < 2.7),
+    remove in 3.0.
+    """
+    scheme, param = get_authorization_scheme_param(authorization)
+    if authorization and scheme.lower() == 'bearer':
+        return param
 
 
 class AuthStore(UserDict):

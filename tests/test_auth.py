@@ -591,3 +591,26 @@ def test_the_logout_actions_of_the_service_of_the_session(sample_app, monkeypatc
     assert client.get('/api/v1/authing/auth/').json()['logout_actions'] == actions
     client = get_api_client(sample_app, user.jwt_build(auth_type='google'))
     assert client.get('/api/v1/authing/auth/').json()['logout_actions'] is None
+
+
+def test_get_token_header_is_kept_until_3_0():
+    """
+    The deprecated dependency still gives the bearer token of `Authorization` (projects
+    read tokens of their own with it).
+    """
+    from fastapi import Depends, FastAPI
+
+    from starlette.testclient import TestClient
+
+    from bazis.contrib.authing.service import get_token_header
+
+    app = FastAPI()
+
+    @app.get('/probe/')
+    def probe(token: str | None = Depends(get_token_header)):
+        return {'token': token}
+
+    client = TestClient(app)
+    assert client.get('/probe/', headers={'Authorization': 'Bearer abc'}).json() == {'token': 'abc'}
+    assert client.get('/probe/', headers={'Authorization': 'Basic abc'}).json() == {'token': None}
+    assert client.get('/probe/').json() == {'token': None}
