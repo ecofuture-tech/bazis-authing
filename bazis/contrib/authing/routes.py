@@ -14,7 +14,7 @@
 
 from django.utils.translation import gettext as _
 
-from fastapi import Depends, Request, Response
+from fastapi import Depends, Response
 
 from starlette.status import (
     HTTP_100_CONTINUE,
@@ -22,8 +22,6 @@ from starlette.status import (
     HTTP_401_UNAUTHORIZED,
     HTTP_422_UNPROCESSABLE_CONTENT,
 )
-
-from asgiref.sync import async_to_sync
 
 from bazis.contrib.users import get_user_model
 from bazis.contrib.users.service import (
@@ -63,7 +61,6 @@ def get_user_lenient(token_data: dict = Depends(get_token_data_lenient)):
 
 @router.get('/auth/', response_model=AuthResponse)
 def auth(
-    request: Request,
     response: Response,
     auth_store: AuthStore = Depends(),
     user: User = Depends(get_user_lenient),
@@ -139,12 +136,7 @@ def auth(
                 )
             )
 
-    # the error answer of the application, with the attributes of the store cookie, which
-    # the cookies of JsonApiBazisException do not have
-    handler = request.app.exception_handlers[JsonApiBazisException]
-    return auth_store.response_set_cookie(
-        async_to_sync(handler)(request, JsonApiBazisException(errors))
-    )
+    raise JsonApiBazisException(errors, cookies=[auth_store.as_cookie()])
 
 
 @router.post('/logout/', status_code=HTTP_204_NO_CONTENT, response_class=Response)

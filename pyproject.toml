@@ -33,7 +33,8 @@ classifiers = [
     "Framework :: FastAPI",
 ]
 dependencies = [
-    "bazis>=2.5.0",
+    # JsonApiCookie
+    "bazis>=2.18.0",
     # get_request_tokens, session_token_data
     "bazis-users>=2.9.0",
     "PyJWT>=2.10",

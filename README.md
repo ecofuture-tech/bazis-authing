@@ -235,6 +235,8 @@ client holds only the store token (a JWT signed with `SECRET_KEY`, with the rand
 - `response_set_cookie(response)` — adds the store cookie to a response (HttpOnly,
   SameSite=Lax, Secure unless `BAZIS_AUTH_COOKIE_SECURE` is off, for the lifetime of the
   store)
+- `as_cookie()` — the same cookie as a `JsonApiCookie`, for
+  `JsonApiBazisException(errors, cookies=[...])`
 - `claim()` — the signed-in user id, once (deletes the store); used by `/auth/`
 
 **AuthStoreTokenRequired**:
