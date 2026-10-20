@@ -493,11 +493,14 @@ def google(sample_app, monkeypatch, settings):
     return SimpleNamespace(app=app, sent=fake.sent)
 
 
-def browser(app):
-    """A browser over HTTPS (the cookies are Secure) that does not follow redirects."""
+BINDING_COOKIE = '__Host-bazis_google_init'
+
+
+def browser(app, scheme='https'):
+    """A browser (over HTTPS the cookies are Secure) that does not follow redirects."""
     from starlette.testclient import TestClient
 
-    return TestClient(app, base_url='https://testserver', follow_redirects=False)
+    return TestClient(app, base_url=f'{scheme}://testserver', follow_redirects=False)
 
 
 def google_init_ticket(client, store: str):
@@ -518,7 +521,8 @@ def google_state_store(state: str):
 def test_google_init_ticket(sample_app, google, settings):
     """
     `POST /google-auth-init/` with the store token gives a one-time ticket for the URL of
-    the window, and binds it to this browser with an HttpOnly cookie of the init path.
+    the window, and binds it to this browser with an HttpOnly `__Host-` cookie (no other
+    origin can set it).
     """
     from django.core.cache import cache
 
@@ -532,16 +536,19 @@ def test_google_init_ticket(sample_app, google, settings):
     assert 0 < cache.ttl(f'{TICKET_CACHE_PREFIX}{data["ticket"]}') <= 60
 
     cookie = cookie_attributes(response.headers['set-cookie'])
-    assert cookie[''] == 'bazis_google_init'
-    assert cookie['Path'] == GOOGLE_INIT_URL
+    assert cookie[''] == BINDING_COOKIE
+    assert cookie['Path'] == '/' and 'Domain' not in cookie
     assert cookie['Max-Age'] == '60'
     assert cookie['SameSite'].lower() == 'lax'
     assert 'HttpOnly' in cookie and 'Secure' in cookie
     assert store not in response.headers['set-cookie']
 
+    # development over HTTP: a cookie without Secure cannot have the prefix
     settings.BAZIS_AUTH_COOKIE_SECURE = False
-    response = google_init_ticket(browser(google.app), store)
-    assert 'Secure' not in cookie_attributes(response.headers['set-cookie'])
+    response = google_init_ticket(browser(google.app, 'http'), store)
+    cookie = cookie_attributes(response.headers['set-cookie'])
+    assert cookie[''] == 'bazis_google_init'
+    assert cookie['Path'] == '/' and 'Secure' not in cookie
 
     # only the client that holds a store gets a ticket
     assert browser(google.app).post(GOOGLE_INIT_URL).status_code == 401
@@ -570,7 +577,7 @@ def test_google_init_ticket_is_bound_to_the_browser(sample_app, google):
 
     url = google_init_ticket(attacker, new_store(sample_app)).json()['url']
     victim = browser(google.app)
-    victim.cookies.set('bazis_google_init', 'wrong', path=GOOGLE_INIT_URL)
+    victim.cookies.set(BINDING_COOKIE, 'wrong')
     assert refused(victim.get(url)) == answer
     assert google.sent == {}
 
@@ -581,10 +588,10 @@ def test_google_init_ticket_is_bound_to_the_browser(sample_app, google):
     google.sent.clear()
     assert refused(client.get(url)) == answer
     url = google_init_ticket(client, new_store(sample_app)).json()['url']
-    cookie = client.cookies.get('bazis_google_init')
+    cookie = client.cookies.get(BINDING_COOKIE)
     assert client.get(url).status_code == 302
     google.sent.clear()
-    client.cookies.set('bazis_google_init', cookie, path=GOOGLE_INIT_URL)
+    client.cookies.set(BINDING_COOKIE, cookie)
     assert refused(client.get(url)) == answer
     assert google.sent == {}
 
@@ -592,6 +599,15 @@ def test_google_init_ticket_is_bound_to_the_browser(sample_app, google):
     data = google_init_ticket(client, new_store(sample_app)).json()
     cache.delete(f'{TICKET_CACHE_PREFIX}{data["ticket"]}')
     assert refused(client.get(data['url'])) == answer
+    assert google.sent == {}
+
+    # the binding planted under the name without the prefix (by a sibling subdomain or over
+    # plain HTTP, which cannot set a `__Host-` cookie) is not read
+    data = google_init_ticket(attacker, new_store(sample_app)).json()
+    binding = cache.get(f'{TICKET_CACHE_PREFIX}{data["ticket"]}')['binding']
+    victim = browser(google.app)
+    victim.cookies.set('bazis_google_init', binding)
+    assert refused(victim.get(data['url'])) == answer
     assert google.sent == {}
 
 
@@ -608,6 +624,18 @@ def test_google_init_ticket_of_a_spent_store(sample_app, google):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_google_init_over_plain_http(sample_app, google, settings):
+    """Development without BAZIS_AUTH_COOKIE_SECURE: the binding cookie has no prefix."""
+    settings.BAZIS_AUTH_COOKIE_SECURE = False
+    store = new_store(sample_app)
+    client = browser(google.app, 'http')
+    url = google_init_ticket(client, store).json()['url']
+    assert client.cookies.get('bazis_google_init')
+    assert client.get(url).status_code == 302
+    assert google_state_store(google.sent['state']) == store
+
+
+@pytest.mark.django_db(transaction=True)
 def test_google_init_with_the_store_token_in_the_url(sample_app, google, settings):
     """
     The deprecated `GET /google-auth-init/?bazis_auth=<store>` is refused unless
@@ -616,6 +644,7 @@ def test_google_init_with_the_store_token_in_the_url(sample_app, google, setting
     from bazis.contrib.authing.services import google as google_service
 
     store = new_store(sample_app)
+    ticket_url = google_init_ticket(browser(google.app), store).json()['url']
     action = google_service.get_login_action()
     assert action == {
         'code': 'google', 'name': 'Google Authentication', 'url': GOOGLE_INIT_URL, 'method': 'POST'
@@ -630,6 +659,10 @@ def test_google_init_with_the_store_token_in_the_url(sample_app, google, setting
     response = browser(google.app).get(GOOGLE_INIT_URL, params={'bazis_auth': store})
     assert response.status_code == 302
     assert google_state_store(google.sent['state']) == store
+    # a ticket still needs its cookie
+    google.sent.clear()
+    assert browser(google.app).get(ticket_url).status_code == 400
+    assert google.sent == {}
 
 
 @pytest.mark.django_db(transaction=True)
@@ -652,8 +685,8 @@ def test_google_flow_keeps_the_store_token_out_of_urls(sample_app, google):
     assert store not in response.headers['location'] and store not in response.text
     # the binding cookie is dropped
     cookie = cookie_attributes(response.headers['set-cookie'])
-    assert cookie[''] == 'bazis_google_init' and cookie['Max-Age'] == '0'
-    assert cookie['Path'] == GOOGLE_INIT_URL
+    assert cookie[''] == BINDING_COOKIE and cookie['Max-Age'] == '0'
+    assert cookie['Path'] == '/' and 'Secure' in cookie
     state = google.sent['state']
     assert state and store not in state
     assert google_state_store(state) == store

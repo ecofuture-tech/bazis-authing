@@ -40,7 +40,7 @@ class Settings(BazisSettings):
         False,
         title=_(
             'Start the Google sign-in by GET with the store token in the URL (deprecated, '
-            'allows a login CSRF)'
+            'removed in 2.9: allows a login CSRF)'
         ),
     )
 

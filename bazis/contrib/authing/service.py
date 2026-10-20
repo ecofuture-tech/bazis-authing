@@ -135,7 +135,8 @@ class AuthStore(UserDict):
     """
     The authorization store of a sign-in: its token (`AuthToken`) is given to the client,
     its data lives in the default cache. A store is single-use: `claim()` deletes the store
-    that gives a session, so that its token, which travels in URLs, gives no other one.
+    that gives a session, so that its token gives no other one (a client may still send it
+    as a query parameter).
     """
 
     token = None

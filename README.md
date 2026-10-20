@@ -185,9 +185,11 @@ Settings: `BAZIS_G_AUTH_CLIENT_ID`, `BAZIS_G_AUTH_CLIENT_SECRET`, optional
 1. **POST /api/v1/authing/google-auth-init/** — starts a sign-in in a browser (the login
    action, `method: POST`). With the store token as the bearer token; answers
    `{"ticket": "...", "url": "/api/v1/authing/google-auth-init/?ticket=..."}` and sets the
-   cookie `bazis_google_init` that binds the ticket to this browser (HttpOnly,
-   SameSite=Lax, Secure unless `BAZIS_AUTH_COOKIE_SECURE` is off, the path of the init,
-   60 seconds)
+   cookie `__Host-bazis_google_init` that binds the ticket to this browser (HttpOnly,
+   Secure, SameSite=Lax, `Path=/`, 60 seconds; the prefix `__Host-` makes sure that no
+   other origin set it). With `BAZIS_AUTH_COOKIE_SECURE` off (development over HTTP) it is
+   `bazis_google_init` without Secure. A new POST in the same browser replaces the cookie:
+   the earlier ticket is refused
 2. **GET /api/v1/authing/google-auth-init/?ticket=...** — the window opens the `url` of the
    answer in the same browser within 60 seconds and is redirected to Google. The ticket is
    used once and only with its cookie: otherwise 400
@@ -208,7 +210,7 @@ the API (e.g. `app.site.com` and `api.site.com`, or a proxy), and a cross-origin
 CORS with credentials.
 
 The old `GET /google-auth-init/?bazis_auth=<store token>` answers 400 unless
-`BAZIS_G_AUTH_INIT_LEGACY_GET` is set (deprecated, removed in 3.0; the login action is then
+`BAZIS_G_AUTH_INIT_LEGACY_GET` is set (deprecated, removed in 2.9; the login action is then
 `GET`): it allows the login CSRF below, enable it only until the clients are updated.
 
 ### AuthStore
@@ -460,10 +462,16 @@ the client drops it.
   not carry the store token
 - **Login CSRF of the Google window** — a URL that starts a sign-in of a store works only
   in the browser that asked for it: the ticket of `POST /google-auth-init/` is one-time,
-  lives 60 seconds and needs the HttpOnly cookie that the POST set. So an attacker cannot
-  send a victim a link that signs the attacker's store in with the victim's Google account
-  (a victim who already consented in Google returns without a prompt) and take the session.
-  `BAZIS_G_AUTH_INIT_LEGACY_GET` re-opens this hole
+  lives 60 seconds and needs the HttpOnly `__Host-` cookie that the POST set. So an
+  attacker cannot send a victim a link that signs the attacker's store in with the
+  victim's Google account (a victim who already consented in Google returns without a
+  prompt) and take the session. `BAZIS_G_AUTH_INIT_LEGACY_GET` re-opens this hole
+- **Residual risks** — with `BAZIS_AUTH_COOKIE_SECURE=false` the binding cookie has no
+  `__Host-` prefix, and a sibling subdomain or a network attacker can plant it. The binding
+  does not protect against a script on a same-site page that can send credentialed
+  requests (an XSS on `app.site.com` can run the flow itself). The store cookie
+  (`BAZIS_AUTH_COOKIE_NAME`) has no prefix either and can be planted the same way (known,
+  not changed in this release)
 - **JWT tokens** — for further API operations
 
 ## Examples

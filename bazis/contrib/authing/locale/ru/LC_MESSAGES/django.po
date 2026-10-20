@@ -89,10 +89,10 @@ msgstr "Вход завершён: вернитесь в приложение."
 #: services/google/conf.py
 msgid ""
 "Start the Google sign-in by GET with the store token in the URL (deprecated, "
-"allows a login CSRF)"
+"removed in 2.9: allows a login CSRF)"
 msgstr ""
 "Начинать вход через Google запросом GET с токеном хранилища в URL (устарело, "
-"допускает login CSRF)"
+"удаляется в 2.9: допускает login CSRF)"
 
 #~ msgid "Name of the authorization cookie"
 #~ msgstr "Наименование авторизационной куки"

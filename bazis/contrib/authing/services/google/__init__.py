@@ -24,7 +24,7 @@ def get_login_action():
     `POST url` with the store token as the bearer token, with the credentials of the browser
     (the answer sets the binding cookie): `{"ticket", "url"}`; then open `url` in a window of
     the same browser. `GET url?bazis_auth=<store token>` with BAZIS_G_AUTH_INIT_LEGACY_GET
-    (deprecated, removed in 3.0).
+    (deprecated, removed in 2.9).
     """
     from bazis.core.app import app
 

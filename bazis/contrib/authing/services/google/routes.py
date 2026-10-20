@@ -79,14 +79,18 @@ STATE_CACHE_PREFIX = 'auth_google_state_'
 # the browser that asked for it (an attacker cannot send a victim the URL of a ticket of the
 # attacker's store: a login CSRF)
 TICKET_CACHE_PREFIX = 'auth_google_ticket_'
-TICKET_COOKIE_NAME = 'bazis_google_init'
 # seconds between the POST and the opening of the window
 TICKET_LIFETIME = 60
 
 
-def ticket_cookie_attributes(request: Request) -> dict:
-    # the cookie of the path of the init only (the POST and the GET share it)
-    return AuthStore._cookie_attributes() | {'path': request.url.path}
+def ticket_cookie_name() -> str:
+    """
+    The binding cookie. The prefix `__Host-` (a Secure cookie of this host, path /) exists so
+    that no other origin can set this cookie: a sibling subdomain or a plain HTTP response
+    could plant the binding of a ticket of an attacker otherwise. Without
+    BAZIS_AUTH_COOKIE_SECURE (development over HTTP) the cookie cannot have the prefix.
+    """
+    return '__Host-bazis_google_init' if settings.BAZIS_AUTH_COOKIE_SECURE else 'bazis_google_init'
 
 
 class GoogleInitTicket(BaseModel):
@@ -110,7 +114,7 @@ def google_auth_init_ticket(
         TICKET_LIFETIME,
     )
     response.set_cookie(
-        TICKET_COOKIE_NAME, binding, max_age=TICKET_LIFETIME, **ticket_cookie_attributes(request)
+        ticket_cookie_name(), binding, max_age=TICKET_LIFETIME, **AuthStore._cookie_attributes()
     )
     return GoogleInitTicket(
         ticket=ticket, url=f'{request.url.path}?{urlencode({"ticket": ticket})}'
@@ -137,13 +141,13 @@ def google_auth_init(
             not data
             or not cache.delete(ticket_key)
             or not compare_digest(
-                request.cookies.get(TICKET_COOKIE_NAME, '').encode(), data['binding'].encode()
+                request.cookies.get(ticket_cookie_name(), '').encode(), data['binding'].encode()
             )
         ):
             raise HTTPException(status_code=400, detail='Invalid or expired ticket')
         tokens = RequestTokens(param=data['store'])
     elif settings.BAZIS_G_AUTH_INIT_LEGACY_GET:
-        # the store token in the URL, from any browser (a login CSRF): remove in 3.0
+        # the store token in the URL, from any browser (a login CSRF): remove in 2.9
         logger.warning('Google authentication: the init with the store token (deprecated)')
     else:
         raise HTTPException(
@@ -164,7 +168,7 @@ def google_auth_init(
     response = async_to_sync(get_oauth().google.authorize_redirect)(
         request, redirect_uri, state=state
     )
-    response.delete_cookie(TICKET_COOKIE_NAME, **ticket_cookie_attributes(request))
+    response.delete_cookie(ticket_cookie_name(), **AuthStore._cookie_attributes())
     return response
 
 
