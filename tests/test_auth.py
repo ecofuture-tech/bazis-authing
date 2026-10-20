@@ -415,6 +415,25 @@ def test_store_cookie_attributes(sample_app, settings):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_auth_answer_of_an_anonymous_user(sample_app):
+    """
+    The answer of `GET /auth/` without a session: the error of the application with the
+    store cookie and its attributes.
+    """
+    from starlette.testclient import TestClient
+
+    response = TestClient(sample_app).get('/api/v1/authing/auth/')
+    assert response.status_code == 400
+    assert response.headers['content-type'] == 'application/json'
+    errors = response.json()['errors']
+    assert [(err['status'], err['code']) for err in errors] == [(401, 'UNAUTHORIZED')]
+    store = errors[0]['meta']['token']
+    assert response.headers.get_list('set-cookie') == [
+        f'bazis_auth={store}; HttpOnly; Max-Age=60; Path=/; SameSite=lax; Secure'
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
 def test_password_redirect_without_store_token(sample_app):
     User.objects.create_user('user1', password='weak_password_1')
     store = new_store(sample_app)
@@ -423,49 +442,221 @@ def test_password_redirect_without_store_token(sample_app):
     assert response.headers['location'] == '/api/v1/authing/auth/'
 
 
-@pytest.mark.django_db(transaction=True)
-def test_google_flow_keeps_the_store_token_out_of_urls(sample_app, monkeypatch, settings):
-    """
-    The store token is only in the URL of /google-auth-init/: the state sent to Google is
-    another one-time value, and the callback ends the window without the token and without
-    taking the session, which the client that holds the store asks for.
-    """
-    import asyncio
+GOOGLE_INIT_URL = '/api/v1/authing/google-auth-init/'
 
-    from starlette.requests import Request
-    from starlette.responses import RedirectResponse
 
-    from bazis.contrib.authing.service import AuthStoreTokenRequired
+class FakeGoogle:
+    """The Google client of authlib: the redirect to Google and a signed-in account."""
+
+    def __init__(self):
+        self.sent = {}
+
+    async def authorize_redirect(self, request, redirect_uri, state=None):
+        from starlette.responses import RedirectResponse
+
+        self.sent['state'] = state
+        return RedirectResponse(f'https://accounts.google.com/o/oauth2/auth?state={state}', 302)
+
+    async def authorize_access_token(self, request, claims_options=None):
+        return {'id_token': 'id-token', 'access_token': 'access-token'}
+
+    async def parse_id_token(self, token, nonce, claims_options=None):
+        return {'sub': '1001', 'email': 'g@site.com', 'email_verified': True}
+
+    async def userinfo(self, token):
+        return {'sub': '1001'}
+
+
+@pytest.fixture
+def google(sample_app, monkeypatch, settings):
+    """
+    The sample application with the Google router under its prefix (the sample does not
+    register it), and a mocked Google client: `google.app`, `google.sent` (the state sent
+    to Google).
+    """
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+
+    import bazis.core.app
     from bazis.contrib.authing.services.google import routes as google_routes
 
-    sent = {}
-
-    class FakeGoogle:
-        async def authorize_redirect(self, request, redirect_uri, state=None):
-            sent['state'] = state
-            return RedirectResponse(f'https://accounts.google.com/?state={state}')
-
-        async def authorize_access_token(self, request, claims_options=None):
-            return {'id_token': 'id-token', 'access_token': 'access-token'}
-
-        async def parse_id_token(self, token, nonce, claims_options=None):
-            return {'sub': '1001', 'email': 'g@site.com', 'email_verified': True}
-
-        async def userinfo(self, token):
-            return {'sub': '1001'}
-
-    class FakeOAuth:
-        google = FakeGoogle()
-
-    monkeypatch.setattr(google_routes, 'get_oauth', lambda: FakeOAuth())
+    app = FastAPI(
+        routes=list(sample_app.router.routes), exception_handlers=sample_app.exception_handlers
+    )
+    app.include_router(google_routes.router, prefix='/api/v1/authing')
+    # url_path_for of the login action resolves in this application
+    monkeypatch.setattr(bazis.core.app, 'app', app)
+    fake = FakeGoogle()
+    monkeypatch.setattr(google_routes, 'get_oauth', lambda: SimpleNamespace(google=fake))
     settings.BAZIS_G_AUTH_REDIRECT_URI = 'https://api.site.com/google-auth-callback/'
+    return SimpleNamespace(app=app, sent=fake.sent)
+
+
+def browser(app):
+    """A browser over HTTPS (the cookies are Secure) that does not follow redirects."""
+    from starlette.testclient import TestClient
+
+    return TestClient(app, base_url='https://testserver', follow_redirects=False)
+
+
+def google_init_ticket(client, store: str):
+    response = client.post(GOOGLE_INIT_URL, headers={'Authorization': f'Bearer {store}'})
+    assert response.status_code == 200, response.text
+    return response
+
+
+def google_state_store(state: str):
+    from django.core.cache import cache
+
+    from bazis.contrib.authing.services.google.routes import STATE_CACHE_PREFIX
+
+    return cache.get(f'{STATE_CACHE_PREFIX}{state}')
+
+
+@pytest.mark.django_db(transaction=True)
+def test_google_init_ticket(sample_app, google, settings):
+    """
+    `POST /google-auth-init/` with the store token gives a one-time ticket for the URL of
+    the window, and binds it to this browser with an HttpOnly cookie of the init path.
+    """
+    from django.core.cache import cache
+
+    from bazis.contrib.authing.services.google.routes import TICKET_CACHE_PREFIX
 
     store = new_store(sample_app)
-    asyncio.run(
-        google_routes.google_auth_init(None, AuthStoreTokenRequired(RequestTokens(param=store)))
-    )
-    state = sent['state']
+    response = google_init_ticket(browser(google.app), store)
+    data = response.json()
+    assert data == {'ticket': data['ticket'], 'url': f'{GOOGLE_INIT_URL}?ticket={data["ticket"]}'}
+    assert store not in response.text
+    assert 0 < cache.ttl(f'{TICKET_CACHE_PREFIX}{data["ticket"]}') <= 60
+
+    cookie = cookie_attributes(response.headers['set-cookie'])
+    assert cookie[''] == 'bazis_google_init'
+    assert cookie['Path'] == GOOGLE_INIT_URL
+    assert cookie['Max-Age'] == '60'
+    assert cookie['SameSite'].lower() == 'lax'
+    assert 'HttpOnly' in cookie and 'Secure' in cookie
+    assert store not in response.headers['set-cookie']
+
+    settings.BAZIS_AUTH_COOKIE_SECURE = False
+    response = google_init_ticket(browser(google.app), store)
+    assert 'Secure' not in cookie_attributes(response.headers['set-cookie'])
+
+    # only the client that holds a store gets a ticket
+    assert browser(google.app).post(GOOGLE_INIT_URL).status_code == 401
+
+
+@pytest.mark.django_db(transaction=True)
+def test_google_init_ticket_is_bound_to_the_browser(sample_app, google):
+    """
+    Login CSRF: an attacker mints a ticket for the attacker's store and sends the victim the
+    URL. The browser of the victim has no binding cookie: 400, no sign-in is started. A
+    wrong cookie and a used or expired ticket are refused with the same answer.
+    """
+    from django.core.cache import cache
+
+    from bazis.contrib.authing.services.google.routes import TICKET_CACHE_PREFIX
+
+    def refused(response):
+        assert response.status_code == 400
+        assert 'location' not in response.headers
+        return response.json()
+
+    attacker = browser(google.app)
+    url = google_init_ticket(attacker, new_store(sample_app)).json()['url']
+    answer = refused(browser(google.app).get(url))
+    assert google.sent == {}
+
+    url = google_init_ticket(attacker, new_store(sample_app)).json()['url']
+    victim = browser(google.app)
+    victim.cookies.set('bazis_google_init', 'wrong', path=GOOGLE_INIT_URL)
+    assert refused(victim.get(url)) == answer
+    assert google.sent == {}
+
+    # the ticket is used once: also the binding cookie is gone after its use
+    client = browser(google.app)
+    url = google_init_ticket(client, new_store(sample_app)).json()['url']
+    assert client.get(url).status_code == 302
+    google.sent.clear()
+    assert refused(client.get(url)) == answer
+    url = google_init_ticket(client, new_store(sample_app)).json()['url']
+    cookie = client.cookies.get('bazis_google_init')
+    assert client.get(url).status_code == 302
+    google.sent.clear()
+    client.cookies.set('bazis_google_init', cookie, path=GOOGLE_INIT_URL)
+    assert refused(client.get(url)) == answer
+    assert google.sent == {}
+
+    # an expired ticket
+    data = google_init_ticket(client, new_store(sample_app)).json()
+    cache.delete(f'{TICKET_CACHE_PREFIX}{data["ticket"]}')
+    assert refused(client.get(data['url'])) == answer
+    assert google.sent == {}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_google_init_ticket_of_a_spent_store(sample_app, google):
+    """The store of the ticket was deleted (logout, expired, spent) before the window opened."""
+    store = new_store(sample_app)
+    client = browser(google.app)
+    url = google_init_ticket(client, store).json()['url']
+    assert get_api_client(sample_app, store).post('/api/v1/authing/logout/').status_code == 204
+
+    assert client.get(url).status_code == 401
+    assert google.sent == {}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_google_init_with_the_store_token_in_the_url(sample_app, google, settings):
+    """
+    The deprecated `GET /google-auth-init/?bazis_auth=<store>` is refused unless
+    BAZIS_G_AUTH_INIT_LEGACY_GET; the login action tells the clients which init to use.
+    """
+    from bazis.contrib.authing.services import google as google_service
+
+    store = new_store(sample_app)
+    action = google_service.get_login_action()
+    assert action == {
+        'code': 'google', 'name': 'Google Authentication', 'url': GOOGLE_INIT_URL, 'method': 'POST'
+    }
+    response = browser(google.app).get(GOOGLE_INIT_URL, params={'bazis_auth': store})
+    assert response.status_code == 400
+    assert 'ticket' in response.json()['errors'][0]['detail']
+    assert google.sent == {}
+
+    settings.BAZIS_G_AUTH_INIT_LEGACY_GET = True
+    assert google_service.get_login_action() == action | {'method': 'GET'}
+    response = browser(google.app).get(GOOGLE_INIT_URL, params={'bazis_auth': store})
+    assert response.status_code == 302
+    assert google_state_store(google.sent['state']) == store
+
+
+@pytest.mark.django_db(transaction=True)
+def test_google_flow_keeps_the_store_token_out_of_urls(sample_app, google):
+    """
+    The store token is in no URL: the window opens the init with a ticket, the state sent
+    to Google is another one-time value, and the callback ends the window without the token
+    and without taking the session, which the client that holds the store asks for.
+    """
+    from starlette.requests import Request
+
+    from bazis.contrib.authing.services.google import routes as google_routes
+
+    store = new_store(sample_app)
+    client = browser(google.app)
+    url = google_init_ticket(client, store).json()['url']
+    assert store not in url
+    response = client.get(url)
+    assert response.status_code == 302
+    assert store not in response.headers['location'] and store not in response.text
+    # the binding cookie is dropped
+    cookie = cookie_attributes(response.headers['set-cookie'])
+    assert cookie[''] == 'bazis_google_init' and cookie['Max-Age'] == '0'
+    assert cookie['Path'] == GOOGLE_INIT_URL
+    state = google.sent['state']
     assert state and store not in state
+    assert google_state_store(state) == store
 
     def callback(state):
         return google_routes.google_auth_callback(

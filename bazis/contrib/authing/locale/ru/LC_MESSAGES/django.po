@@ -86,5 +86,13 @@ msgstr "Передавать куки авторизации только по H
 msgid "The sign-in is finished: return to the application."
 msgstr "Вход завершён: вернитесь в приложение."
 
+#: services/google/conf.py
+msgid ""
+"Start the Google sign-in by GET with the store token in the URL (deprecated, "
+"allows a login CSRF)"
+msgstr ""
+"Начинать вход через Google запросом GET с токеном хранилища в URL (устарело, "
+"допускает login CSRF)"
+
 #~ msgid "Name of the authorization cookie"
 #~ msgstr "Наименование авторизационной куки"

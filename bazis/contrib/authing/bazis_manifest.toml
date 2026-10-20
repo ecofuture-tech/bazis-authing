@@ -70,4 +70,7 @@ text = "the store cookie is Secure: set BS_BAZIS_AUTH_COOKIE_SECURE=false for de
 text = "the authorization store lives in the default cache: all processes must share it (Redis)"
 
 [[pitfalls]]
-text = "the GET /google-auth-init/?bazis_auth=<store> allows a login CSRF (a victim who consented in Google signs an attacker's store in): known limitation, a POST init with a one-time ticket is planned"
+text = "the Google browser login starts with POST /google-auth-init/ (the store as the bearer token, with the credentials of the browser) and opens the url of the answer in the same browser: the ticket is bound to that browser by a SameSite=Lax cookie, so the page must be same-site with the API"
+
+[[pitfalls]]
+text = "BAZIS_G_AUTH_INIT_LEGACY_GET (deprecated, removed in 3.0) re-enables GET /google-auth-init/?bazis_auth=<store>, which allows a login CSRF: only for clients not updated yet"

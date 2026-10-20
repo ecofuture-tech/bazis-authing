@@ -37,6 +37,9 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
   `BAZIS_G_AUTH_REDIRECT_URI` (default `HOST_URL` + the path of `/google-auth-callback/`:
   set `BS_HOST_URL`). Register that redirect URI in the Google OAuth client. The OAuth
   client is built once per process: restart after changing these settings.
+  `BS_BAZIS_G_AUTH_INIT_LEGACY_GET` (default false, not dynamic; deprecated, removed in
+  3.0): also accept the old `GET /google-auth-init/?bazis_auth=<store token>`, for clients
+  not updated yet. It allows the login CSRF described below.
 
 ## Flows
 
@@ -54,11 +57,19 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
      (the query parameters of the same names are deprecated and removed in 3.0).
    Both answer 303 to `/auth/` (no token in the URL) and set the cookie: follow it with the
    same bearer token or the cookie.
-   - Google in a browser: open `GET /google-auth-init/?bazis_auth=<store token>` in a window
-     (the only URL with the store token; the state sent to Google is a one-time value).
-     Google returns to `/google-auth-callback/`, which signs the store in and answers a page
-     without tokens ("return to the application"); the client that holds the store token
-     asks `GET /auth/` (e.g. every second) until the store is signed in or has an error.
+   - Google in a browser (the login action has `method: POST`): `POST /google-auth-init/`
+     with the store token as the bearer token and the credentials of the browser answers
+     `{"ticket", "url"}` and sets the binding cookie `bazis_google_init` (HttpOnly,
+     SameSite=Lax, Secure as the store cookie, path of the init, 60 s). Open `url`
+     (`/google-auth-init/?ticket=<ticket>`) within 60 s in a window of the same browser:
+     the ticket is used once and only with that cookie (else 400, no detail of the cause),
+     a store that is gone meanwhile gives 401. The window goes to Google (the state is a
+     one-time value) and back to `/google-auth-callback/`, which signs the store in and
+     answers a page without tokens ("return to the application"); the client that holds
+     the store token asks `GET /auth/` (e.g. every second) until the store is signed in or
+     has an error. The binding cookie is SameSite=Lax: the page that POSTs must be
+     same-site with the API (e.g. `app.site.com` and `api.site.com`, or a proxy), else the
+     browser does not store it; a cross-origin API also needs CORS with credentials.
 3. `GET /auth/` with a signed-in store: 200
    `{user_id, username, first_name, last_name, email, token, logout_actions}` once: the
    store is deleted (and the store cookie with it), the next request with its token gets
@@ -77,17 +88,17 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
   as anonymous on HTTP, bazis-ws rejects it; a session token is never accepted as a store
   token. A store gives one session (the deletion in the cache is atomic, so of concurrent
   requests only one gets it), and a signed-in store lives `BAZIS_AUTH_CLAIM_LIFETIME`.
-- The store token is in a URL only in the Google browser flow (`/google-auth-init/`), so it
-  can be in access logs: whoever has it before the client takes the session can take it.
-  The client asks for the session as soon as the store is signed in.
-- Known limitation of the GET `/google-auth-init/` (login CSRF): an attacker can send a
-  victim the link `/google-auth-init/?bazis_auth=<attacker's store>`. If the victim has
-  already consented to the app in Google, Google returns without a prompt, and the victim's
-  account silently signs in the attacker's store, which then gives the attacker the
-  victim's session. The callback sets the store cookie only after authlib accepted the
-  state and the sign-in succeeded, but that does not stop this link. Planned fix: a POST
-  init with the store token as the bearer token that returns a one-time ticket for the
-  window URL, so that only the client holding the store can start a Google sign-in for it.
+- The flows put the store token in no URL (a client that sends it as the query parameter
+  puts it in access logs: prefer the bearer token or the cookie).
+- Login CSRF of the Google browser flow: a URL that starts a sign-in of a store must not
+  work in another browser, else an attacker sends a victim the URL for the attacker's
+  store, a victim who already consented in Google signs that store in without a prompt,
+  and the attacker takes the victim's session. A ticket alone does not stop it (the
+  attacker can get one for the attacker's store): the ticket is bound to the browser that
+  asked for it by the HttpOnly cookie of the POST, which another browser does not have.
+  `BAZIS_G_AUTH_INIT_LEGACY_GET` re-opens this hole. The callback sets the store cookie
+  only after authlib accepted the state (in the session of this browser) and the sign-in
+  succeeded.
 - Google: the ID token is verified (signature, issuer, audience, expiration) and identifies
   the account; the email must have `email_verified: true`. The user is found by email
   (case-insensitive) or created (`username` = Google `sub`, unusable password). An existing

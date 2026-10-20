@@ -15,7 +15,8 @@
 
 import logging
 from html import escape
-from secrets import token_hex
+from secrets import compare_digest, token_hex
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -25,16 +26,16 @@ from django.db.models import Q
 from django.utils.translation import gettext
 from django.utils.translation import gettext_lazy as _
 
-from fastapi import Body, Depends, HTTPException, Query, Request
+from fastapi import Body, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 
 from pydantic import BaseModel
 
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
 from authlib.integrations.starlette_client import OAuth
 
-from bazis.contrib.authing.service import AuthStoreTokenRequired
-from bazis.contrib.users.service import RequestTokens
+from bazis.contrib.authing.service import AuthStore, AuthStoreTokenRequired
+from bazis.contrib.users.service import RequestTokens, get_request_tokens
 from bazis.core.routing import BazisRouter
 
 from . import AUTH_CODE
@@ -73,26 +74,98 @@ claims_options = {
 # to Google and does not come back in the URL of the callback
 STATE_CACHE_PREFIX = 'auth_google_state_'
 
+# the ticket of the window URL (one-time, in the cache) -> the store token and the secret of
+# the binding cookie: the store token is in no URL, and the ticket opens the sign-in only in
+# the browser that asked for it (an attacker cannot send a victim the URL of a ticket of the
+# attacker's store: a login CSRF)
+TICKET_CACHE_PREFIX = 'auth_google_ticket_'
+TICKET_COOKIE_NAME = 'bazis_google_init'
+# seconds between the POST and the opening of the window
+TICKET_LIFETIME = 60
+
+
+def ticket_cookie_attributes(request: Request) -> dict:
+    # the cookie of the path of the init only (the POST and the GET share it)
+    return AuthStore._cookie_attributes() | {'path': request.url.path}
+
+
+class GoogleInitTicket(BaseModel):
+    ticket: str
+    url: str
+
+
+@router.post('/google-auth-init/', response_model=GoogleInitTicket)
+def google_auth_init_ticket(
+    request: Request, response: Response, auth_store: AuthStoreTokenRequired = Depends()
+):
+    """
+    Starts a Google sign-in of the store: a one-time ticket for the URL the window opens
+    (`url`), bound to this browser by an HttpOnly cookie (send the request with the
+    credentials of the browser).
+    """
+    ticket, binding = token_hex(), token_hex()
+    cache.set(
+        f'{TICKET_CACHE_PREFIX}{ticket}',
+        {'store': auth_store.token.value, 'binding': binding},
+        TICKET_LIFETIME,
+    )
+    response.set_cookie(
+        TICKET_COOKIE_NAME, binding, max_age=TICKET_LIFETIME, **ticket_cookie_attributes(request)
+    )
+    return GoogleInitTicket(
+        ticket=ticket, url=f'{request.url.path}?{urlencode({"ticket": ticket})}'
+    )
+
 
 @router.get('/google-auth-init/')
-async def google_auth_init(request: Request, auth_store: AuthStoreTokenRequired = Depends()):
+def google_auth_init(
+    request: Request,
+    ticket: str | None = None,
+    tokens: RequestTokens = Depends(get_request_tokens),
+):
+    """
+    The window of a Google sign-in: opens the URL that `POST /google-auth-init/` gave, in
+    the same browser, and is redirected to Google.
+    """
     from bazis.core.app import app
 
-    oauth_instance = await sync_to_async(get_oauth)()
+    if ticket:
+        ticket_key = f'{TICKET_CACHE_PREFIX}{ticket}'
+        data = cache.get(ticket_key)
+        # the ticket is used once, in the browser that has its cookie
+        if (
+            not data
+            or not cache.delete(ticket_key)
+            or not compare_digest(
+                request.cookies.get(TICKET_COOKIE_NAME, '').encode(), data['binding'].encode()
+            )
+        ):
+            raise HTTPException(status_code=400, detail='Invalid or expired ticket')
+        tokens = RequestTokens(param=data['store'])
+    elif settings.BAZIS_G_AUTH_INIT_LEGACY_GET:
+        # the store token in the URL, from any browser (a login CSRF): remove in 3.0
+        logger.warning('Google authentication: the init with the store token (deprecated)')
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Missing ticket: the store token in the URL is not accepted, POST to this URL '
+                'with the store token for a ticket'
+            ),
+        )
+    auth_store = AuthStoreTokenRequired(tokens)
 
     state = token_hex()
-    await sync_to_async(cache.set)(
-        f'{STATE_CACHE_PREFIX}{state}', auth_store.token.value, auth_store.lifetime
-    )
+    cache.set(f'{STATE_CACHE_PREFIX}{state}', auth_store.token.value, auth_store.lifetime)
 
     redirect_uri = settings.BAZIS_G_AUTH_REDIRECT_URI or (
         settings.HOST_URL + app.router.url_path_for('google_auth_callback')
     )
-    return await oauth_instance.google.authorize_redirect(
-        request,
-        redirect_uri,
-        state=state,
+    response = async_to_sync(get_oauth().google.authorize_redirect)(
+        request, redirect_uri, state=state
     )
+    response.delete_cookie(TICKET_COOKIE_NAME, **ticket_cookie_attributes(request))
+    return response
 
 
 CALLBACK_PAGE = (
