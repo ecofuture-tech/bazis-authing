@@ -612,6 +612,62 @@ def test_google_init_ticket_is_bound_to_the_browser(sample_app, google):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_google_init_ticket_is_used_once_by_concurrent_windows(sample_app, google, monkeypatch):
+    """
+    Concurrent windows with the cookie of the ticket: all of them read the ticket before any
+    of them deletes it, and only the one whose deletion removed it is redirected to Google.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from django.core.cache import cache
+
+    from bazis.contrib.authing.services.google import routes as google_routes
+
+    windows = 5
+    read_all = Barrier(windows)
+
+    class ConcurrentCache:
+        def __getattr__(self, name):
+            return getattr(cache, name)
+
+        def get(self, key, *args, **kwargs):
+            value = cache.get(key, *args, **kwargs)
+            if key.startswith(google_routes.TICKET_CACHE_PREFIX):
+                read_all.wait(timeout=10)
+            return value
+
+    owner = browser(google.app)
+    url = google_init_ticket(owner, new_store(sample_app)).json()['url']
+    binding = owner.cookies.get(BINDING_COOKIE)
+    monkeypatch.setattr(google_routes, 'cache', ConcurrentCache())
+
+    def open_window(_):
+        client = browser(google.app)
+        client.cookies.set(BINDING_COOKIE, binding)
+        return client.get(url).status_code
+
+    with ThreadPoolExecutor(windows) as pool:
+        statuses = sorted(pool.map(open_window, range(windows)))
+    assert statuses == [302] + [400] * (windows - 1)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_google_init_ticket_is_spent_by_a_wrong_cookie(sample_app, google):
+    """
+    The ticket is used up before the cookie is compared: after the URL was opened with a
+    wrong cookie, it does not work in the browser that asked for it either.
+    """
+    owner = browser(google.app)
+    url = google_init_ticket(owner, new_store(sample_app)).json()['url']
+    other = browser(google.app)
+    other.cookies.set(BINDING_COOKIE, 'wrong')
+    assert other.get(url).status_code == 400
+    assert owner.get(url).status_code == 400
+    assert google.sent == {}
+
+
+@pytest.mark.django_db(transaction=True)
 def test_google_init_ticket_of_a_spent_store(sample_app, google):
     """The store of the ticket was deleted (logout, expired, spent) before the window opened."""
     store = new_store(sample_app)
