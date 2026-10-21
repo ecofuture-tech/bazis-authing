@@ -35,7 +35,7 @@ from asgiref.sync import async_to_sync
 from authlib.integrations.starlette_client import OAuth
 
 from bazis.contrib.authing.service import AuthStore, AuthStoreTokenRequired
-from bazis.contrib.users.service import RequestTokens, get_request_tokens
+from bazis.contrib.users.service import RequestTokens
 from bazis.core.routing import BazisRouter
 
 from . import AUTH_CODE
@@ -122,42 +122,25 @@ def google_auth_init_ticket(
 
 
 @router.get('/google-auth-init/')
-def google_auth_init(
-    request: Request,
-    ticket: str | None = None,
-    tokens: RequestTokens = Depends(get_request_tokens),
-):
+def google_auth_init(request: Request, ticket: str):
     """
     The window of a Google sign-in: opens the URL that `POST /google-auth-init/` gave, in
     the same browser, and is redirected to Google.
     """
     from bazis.core.app import app
 
-    if ticket:
-        ticket_key = f'{TICKET_CACHE_PREFIX}{ticket}'
-        data = cache.get(ticket_key)
-        # the ticket is used once, in the browser that has its cookie
-        if (
-            not data
-            or not cache.delete(ticket_key)
-            or not compare_digest(
-                request.cookies.get(ticket_cookie_name(), '').encode(), data['binding'].encode()
-            )
-        ):
-            raise HTTPException(status_code=400, detail='Invalid or expired ticket')
-        tokens = RequestTokens(param=data['store'])
-    elif settings.BAZIS_G_AUTH_INIT_LEGACY_GET:
-        # the store token in the URL, from any browser (a login CSRF): remove in 2.9
-        logger.warning('Google authentication: the init with the store token (deprecated)')
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                'Missing ticket: the store token in the URL is not accepted, POST to this URL '
-                'with the store token for a ticket'
-            ),
+    ticket_key = f'{TICKET_CACHE_PREFIX}{ticket}'
+    data = cache.get(ticket_key)
+    # the ticket is used once, in the browser that has its cookie
+    if (
+        not data
+        or not cache.delete(ticket_key)
+        or not compare_digest(
+            request.cookies.get(ticket_cookie_name(), '').encode(), data['binding'].encode()
         )
-    auth_store = AuthStoreTokenRequired(tokens)
+    ):
+        raise HTTPException(status_code=400, detail='Invalid or expired ticket')
+    auth_store = AuthStoreTokenRequired(RequestTokens(param=data['store']))
 
     state = token_hex()
     cache.set(f'{STATE_CACHE_PREFIX}{state}', auth_store.token.value, auth_store.lifetime)

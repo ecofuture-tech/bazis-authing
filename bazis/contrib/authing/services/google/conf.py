@@ -35,14 +35,6 @@ class Settings(BazisSettings):
         title=_('Google redirect URI (by default HOST_URL + the path of google_auth_callback)'),
         json_schema_extra={'dynamic': True},
     )
-    # not dynamic: the login action of every anonymous GET /auth/ reads it
-    BAZIS_G_AUTH_INIT_LEGACY_GET: bool = Field(
-        False,
-        title=_(
-            'Start the Google sign-in by GET with the store token in the URL (deprecated, '
-            'removed in 2.9: allows a login CSRF)'
-        ),
-    )
 
 
 settings = Settings()

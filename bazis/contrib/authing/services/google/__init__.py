@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 
 
@@ -23,8 +22,7 @@ def get_login_action():
     """
     `POST url` with the store token as the bearer token, with the credentials of the browser
     (the answer sets the binding cookie): `{"ticket", "url"}`; then open `url` in a window of
-    the same browser. `GET url?bazis_auth=<store token>` with BAZIS_G_AUTH_INIT_LEGACY_GET
-    (deprecated, removed in 2.9).
+    the same browser.
     """
     from bazis.core.app import app
 
@@ -32,5 +30,5 @@ def get_login_action():
         'code': AUTH_CODE,
         'name': _('Google Authentication'),
         'url': app.router.url_path_for('google_auth_init'),
-        'method': 'GET' if settings.BAZIS_G_AUTH_INIT_LEGACY_GET else 'POST',
+        'method': 'POST',
     }

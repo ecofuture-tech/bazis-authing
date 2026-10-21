@@ -209,10 +209,6 @@ window on an error. The binding cookie is SameSite=Lax: the page must be same-si
 the API (e.g. `app.site.com` and `api.site.com`, or a proxy), and a cross-origin API needs
 CORS with credentials.
 
-The old `GET /google-auth-init/?bazis_auth=<store token>` answers 400 unless
-`BAZIS_G_AUTH_INIT_LEGACY_GET` is set (deprecated, removed in 2.9; the login action is then
-`GET`): it allows the login CSRF below, enable it only until the clients are updated.
-
 ### AuthStore
 
 The state of a sign-in: the data lives in the default cache (`auth_store_<key>`), the
@@ -465,7 +461,7 @@ the client drops it.
   lives 60 seconds and needs the HttpOnly `__Host-` cookie that the POST set. So an
   attacker cannot send a victim a link that signs the attacker's store in with the
   victim's Google account (a victim who already consented in Google returns without a
-  prompt) and take the session. `BAZIS_G_AUTH_INIT_LEGACY_GET` re-opens this hole
+  prompt) and take the session
 - **Residual risks** — with `BAZIS_AUTH_COOKIE_SECURE=false` the binding cookie has no
   `__Host-` prefix, and a sibling subdomain or a network attacker can plant it. The binding
   does not protect against a script on a same-site page that can send credentialed

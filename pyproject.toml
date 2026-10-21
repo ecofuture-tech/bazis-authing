@@ -34,7 +34,7 @@ classifiers = [
 ]
 dependencies = [
     # JsonApiCookie
-    "bazis>=2.18.0",
+    "bazis>=2.19.0",
     # get_request_tokens, session_token_data
     "bazis-users>=2.9.0",
     "PyJWT>=2.10",

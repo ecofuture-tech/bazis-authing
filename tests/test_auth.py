@@ -636,33 +636,26 @@ def test_google_init_over_plain_http(sample_app, google, settings):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_google_init_with_the_store_token_in_the_url(sample_app, google, settings):
+def test_google_init_with_the_store_token_in_the_url(sample_app, google):
     """
-    The deprecated `GET /google-auth-init/?bazis_auth=<store>` is refused unless
-    BAZIS_G_AUTH_INIT_LEGACY_GET; the login action tells the clients which init to use.
+    `GET /google-auth-init/?bazis_auth=<store>` (the init before 2.8) starts no sign-in: the
+    window needs a ticket, which the login action tells the clients to get by POST.
     """
-    from bazis.contrib.authing.services import google as google_service
+    from django.core.cache import cache
 
-    store = new_store(sample_app)
-    ticket_url = google_init_ticket(browser(google.app), store).json()['url']
-    action = google_service.get_login_action()
-    assert action == {
+    from bazis.contrib.authing.services import google as google_service
+    from bazis.contrib.authing.services.google.routes import STATE_CACHE_PREFIX
+
+    assert google_service.get_login_action() == {
         'code': 'google', 'name': 'Google Authentication', 'url': GOOGLE_INIT_URL, 'method': 'POST'
     }
+    store = new_store(sample_app)
+    states = set(cache.keys(f'{STATE_CACHE_PREFIX}*'))
     response = browser(google.app).get(GOOGLE_INIT_URL, params={'bazis_auth': store})
-    assert response.status_code == 400
-    assert 'ticket' in response.json()['errors'][0]['detail']
+    assert response.status_code == 422
+    assert 'location' not in response.headers and 'set-cookie' not in response.headers
     assert google.sent == {}
-
-    settings.BAZIS_G_AUTH_INIT_LEGACY_GET = True
-    assert google_service.get_login_action() == action | {'method': 'GET'}
-    response = browser(google.app).get(GOOGLE_INIT_URL, params={'bazis_auth': store})
-    assert response.status_code == 302
-    assert google_state_store(google.sent['state']) == store
-    # a ticket still needs its cookie
-    google.sent.clear()
-    assert browser(google.app).get(ticket_url).status_code == 400
-    assert google.sent == {}
+    assert set(cache.keys(f'{STATE_CACHE_PREFIX}*')) == states
 
 
 @pytest.mark.django_db(transaction=True)

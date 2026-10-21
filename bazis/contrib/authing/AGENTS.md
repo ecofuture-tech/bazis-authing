@@ -37,9 +37,6 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
   `BAZIS_G_AUTH_REDIRECT_URI` (default `HOST_URL` + the path of `/google-auth-callback/`:
   set `BS_HOST_URL`). Register that redirect URI in the Google OAuth client. The OAuth
   client is built once per process: restart after changing these settings.
-  `BS_BAZIS_G_AUTH_INIT_LEGACY_GET` (default false, not dynamic; deprecated, removed in
-  2.9, not 3.0: it re-opens a login CSRF): also accept the old
-  `GET /google-auth-init/?bazis_auth=<store token>`, for clients not updated yet.
 
 ## Flows
 
@@ -90,9 +87,8 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
   as anonymous on HTTP, bazis-ws rejects it; a session token is never accepted as a store
   token. A store gives one session (the deletion in the cache is atomic, so of concurrent
   requests only one gets it), and a signed-in store lives `BAZIS_AUTH_CLAIM_LIFETIME`.
-- The flows put the store token in no URL (with BAZIS_G_AUTH_INIT_LEGACY_GET the Google
-  init has it in the URL; a client that sends it as the query parameter puts it in access
-  logs: prefer the bearer token or the cookie).
+- The flows put the store token in no URL (a client that sends it as the query parameter
+  puts it in access logs: prefer the bearer token or the cookie).
 - Login CSRF of the Google browser flow: a URL that starts a sign-in of a store must not
   work in another browser, else an attacker sends a victim the URL for the attacker's
   store, a victim who already consented in Google signs that store in without a prompt,
@@ -100,9 +96,8 @@ router.register('/authing', 'bazis.contrib.authing.services.google.router')    #
   attacker can get one for the attacker's store): the ticket is bound to the browser that
   asked for it by the HttpOnly cookie of the POST, which another browser does not have;
   its prefix `__Host-` makes sure that no other origin (a sibling subdomain, plain HTTP)
-  set it. `BAZIS_G_AUTH_INIT_LEGACY_GET` re-opens this hole. The callback sets the store
-  cookie only after authlib accepted the state (in the session of this browser) and the
-  sign-in succeeded.
+  set it. The callback sets the store cookie only after authlib accepted the state (in the
+  session of this browser) and the sign-in succeeded.
 - Residual risks: with `BAZIS_AUTH_COOKIE_SECURE=false` the binding cookie has no prefix,
   and a sibling subdomain or a network attacker can plant it. The binding does not protect
   against a script on a same-site page that can send credentialed requests (an XSS on
