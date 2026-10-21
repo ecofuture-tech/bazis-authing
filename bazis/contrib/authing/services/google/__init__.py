@@ -19,11 +19,16 @@ AUTH_CODE = 'google'
 
 
 def get_login_action():
+    """
+    `POST url` with the store token as the bearer token, with the credentials of the browser
+    (the answer sets the binding cookie): `{"ticket", "url"}`; then open `url` in a window of
+    the same browser.
+    """
     from bazis.core.app import app
 
     return {
         'code': AUTH_CODE,
         'name': _('Google Authentication'),
         'url': app.router.url_path_for('google_auth_init'),
-        'method': 'GET',
+        'method': 'POST',
     }

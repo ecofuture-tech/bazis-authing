@@ -34,7 +34,7 @@ import jwt
 
 from bazis.contrib.users import get_anonymous_user_model, get_user_model
 from bazis.contrib.users.service import RequestTokens, get_request_tokens
-from bazis.core.errors import JsonApi401Exception
+from bazis.core.errors import JsonApi401Exception, JsonApiCookie
 from bazis.core.utils.functools import CtxToggle
 
 
@@ -135,7 +135,8 @@ class AuthStore(UserDict):
     """
     The authorization store of a sign-in: its token (`AuthToken`) is given to the client,
     its data lives in the default cache. A store is single-use: `claim()` deletes the store
-    that gives a session, so that its token, which travels in URLs, gives no other one.
+    that gives a session, so that its token gives no other one (a client may still send it
+    as a query parameter).
     """
 
     token = None
@@ -190,14 +191,18 @@ class AuthStore(UserDict):
             'samesite': 'lax',
         }
 
-    def response_set_cookie(self, response):
-        """Sets the store token as the cookie, for as long as the store lives."""
-        response.set_cookie(
+    def as_cookie(self) -> JsonApiCookie:
+        """The store token as the cookie, for as long as the store lives."""
+        return JsonApiCookie(
             key=settings.BAZIS_AUTH_COOKIE_NAME,
             value=self.token.value,
             max_age=self.lifetime,
             **self._cookie_attributes(),
         )
+
+    def response_set_cookie(self, response):
+        """Sets the store cookie (`as_cookie()`) on the response."""
+        response.set_cookie(**self.as_cookie()._asdict())
         return response
 
     @classmethod

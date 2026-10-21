@@ -174,6 +174,41 @@ Built-in module for username and password authentication.
 
 The token endpoint answers `{"access_token": "...", "token_type": "bearer"}`.
 
+#### Google Authentication
+
+**Module code**: `google` (`bazis.contrib.authing.services.google`, register its router).
+Settings: `BAZIS_G_AUTH_CLIENT_ID`, `BAZIS_G_AUTH_CLIENT_SECRET`, optional
+`BAZIS_G_AUTH_REDIRECT_URI` (dynamic, edited in the admin).
+
+**Endpoints**:
+
+1. **POST /api/v1/authing/google-auth-init/** — starts a sign-in in a browser (the login
+   action, `method: POST`). With the store token as the bearer token; answers
+   `{"ticket": "...", "url": "/api/v1/authing/google-auth-init/?ticket=..."}` and sets the
+   cookie `__Host-bazis_google_init` that binds the ticket to this browser (HttpOnly,
+   Secure, SameSite=Lax, `Path=/`, 60 seconds; the prefix `__Host-` makes sure that no
+   other origin set it). With `BAZIS_AUTH_COOKIE_SECURE` off (development over HTTP) it is
+   `bazis_google_init` without Secure. A new POST in the same browser replaces the cookie:
+   the earlier ticket is refused
+2. **GET /api/v1/authing/google-auth-init/?ticket=...** — the window opens the `url` of the
+   answer in the same browser within 60 seconds and is redirected to Google. The ticket is
+   used once and only with its cookie: otherwise 400
+3. **GET /api/v1/authing/google-auth-callback/** — Google returns the window here: the store
+   is signed in, the page asks the user to return to the application. The client that
+   holds the store token asks `GET /auth/` until the store is signed in or has an error
+4. **POST /api/v1/authing/google-auth-verify/** — the tokens a client received from a
+   Google SDK (mobile), JSON `{"id_token", "access_token"}`, with the store token; 303 to
+   `/auth/` as the password login
+
+**Clients** (a web application): on the click, open the window at once
+(`window.open('', ...)`: a browser blocks a window that a click does not open), then
+`POST` the init with `Authorization: Bearer <store token>` and `credentials: 'include'`
+(the answer sets the binding cookie), set the location of the window to the `url` of the
+answer and ask `GET /auth/` with the store token until the store is signed in; close the
+window on an error. The binding cookie is SameSite=Lax: the page must be same-site with
+the API (e.g. `app.site.com` and `api.site.com`, or a proxy), and a cross-origin API needs
+CORS with credentials.
+
 ### AuthStore
 
 The state of a sign-in: the data lives in the default cache (`auth_store_<key>`), the
@@ -198,6 +233,8 @@ client holds only the store token (a JWT signed with `SECRET_KEY`, with the rand
 - `response_set_cookie(response)` — adds the store cookie to a response (HttpOnly,
   SameSite=Lax, Secure unless `BAZIS_AUTH_COOKIE_SECURE` is off, for the lifetime of the
   store)
+- `as_cookie()` — the same cookie as a `JsonApiCookie`, for
+  `JsonApiBazisException(errors, cookies=[...])`
 - `claim()` — the signed-in user id, once (deletes the store); used by `/auth/`
 
 **AuthStoreTokenRequired**:
@@ -417,13 +454,20 @@ the client drops it.
   a signed-in one `BAZIS_AUTH_CLAIM_LIFETIME` (default 60); the cookie lives as long
 - **Cookie attributes** — HttpOnly, SameSite=Lax, Secure (`BAZIS_AUTH_COOKIE_SECURE=false`
   for development over plain HTTP)
-- **No tokens in redirects** — the login redirects and the Google state do not carry the
-  store token; only `/google-auth-init/?bazis_auth=<store token>` has it in the URL
-- **Known limitation (login CSRF)** — the Google init is a GET with the store token, so an
-  attacker can send a victim `/google-auth-init/?bazis_auth=<attacker's store>`: a victim
-  who already consented in Google signs the attacker's store in without a prompt, and the
-  attacker takes the session. Planned fix: a POST init with the store token as the bearer
-  token that returns a one-time ticket for the window URL
+- **No tokens in URLs** — the login redirects, the Google window and the Google state do
+  not carry the store token
+- **Login CSRF of the Google window** — a URL that starts a sign-in of a store works only
+  in the browser that asked for it: the ticket of `POST /google-auth-init/` is one-time,
+  lives 60 seconds and needs the HttpOnly `__Host-` cookie that the POST set. So an
+  attacker cannot send a victim a link that signs the attacker's store in with the
+  victim's Google account (a victim who already consented in Google returns without a
+  prompt) and take the session
+- **Residual risks** — with `BAZIS_AUTH_COOKIE_SECURE=false` the binding cookie has no
+  `__Host-` prefix, and a sibling subdomain or a network attacker can plant it. The binding
+  does not protect against a script on a same-site page that can send credentialed
+  requests (an XSS on `app.site.com` can run the flow itself). The store cookie
+  (`BAZIS_AUTH_COOKIE_NAME`) has no prefix either and can be planted the same way (known,
+  not changed in this release)
 - **JWT tokens** — for further API operations
 
 ## Examples
